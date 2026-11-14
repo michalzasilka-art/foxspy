@@ -5,7 +5,7 @@
 // 3D: the Blender models in models/ (made on the Windows PC); until each one arrives a stand-in is used.
 import * as THREE from './lib/three.module.min.js';
 import { GLTFLoader } from './lib/GLTFLoader.js';
-import { MISSIONS, RANKS } from './missions.js';
+import { MISSIONS, RANKS } from './missions.js?v=2';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -76,8 +76,11 @@ async function loadAssets() {
 function dress(root) {
   root.traverse((o) => {
     if (!o.isMesh) return; o.frustumCulled = !o.isSkinnedMesh;
-    const ms = Array.isArray(o.material) ? o.material : [o.material];
-    for (const m of ms) { if (!m) continue; if (/glow/i.test(m.name)) { m.emissive = new THREE.Color(1, 1, 1); m.emissiveIntensity = 1.6; if (m.vertexColors) m.emissiveMap = null; m.toneMapped = false; } m.envMapIntensity = .6; }
+    // "Glow" parts: full-bright in their own (vertex) colours, untouched by the lights; skinned meshes keep skinning
+    const glowOf = (m) => { const g = new THREE.MeshBasicMaterial({ color: m.color ? m.color.clone().multiplyScalar(1.25) : 0xffffff, vertexColors: !!m.vertexColors, toneMapped: false, map: m.map || null }); g.name = m.name; return g; };
+    if (Array.isArray(o.material)) o.material = o.material.map((m) => (m && /glow/i.test(m.name) ? glowOf(m) : m));
+    else if (o.material && /glow/i.test(o.material.name)) o.material = glowOf(o.material);
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.isMeshStandardMaterial) m.envMapIntensity = .6;
     if (/glass/i.test(o.name)) { o.material = new THREE.MeshPhysicalMaterial({ color: '#bfefff', transparent: true, opacity: .16, roughness: .05, metalness: 0, transmission: 0, depthWrite: false, side: THREE.DoubleSide }); o.renderOrder = 5; }
   });
   return root;
@@ -85,7 +88,7 @@ function dress(root) {
 const fitHeight = (root, h) => { root.updateMatrixWorld(true); const b = new THREE.Box3().setFromObject(root); const s = h / Math.max(.001, b.max.y - b.min.y); root.scale.multiplyScalar(s); root.updateMatrixWorld(true); const b2 = new THREE.Box3().setFromObject(root); root.position.y -= b2.min.y; return root; };
 
 // Foxino: the Blender spy (rigged, animated) or the stand-in (the low-poly football Foxino, no clips)
-function makeFoxino() {
+function makeFoxino(withGun = true) {
   const src = A.fox || A.standin; const root = new THREE.Group();
   const inner = cloneSkinned(src.scene); dress(inner); fitHeight(inner, 1.4); root.add(inner);
   const mixer = new THREE.AnimationMixer(inner), clips = {}; for (const c of (A.fox ? A.fox.animations : [])) clips[c.name.toLowerCase()] = mixer.clipAction(c);
@@ -95,12 +98,13 @@ function makeFoxino() {
     update(dt, moving, speed) {
       fox.t += dt; mixer.update(dt);
       if (!fox.hasClips) { inner.position.y = moving ? Math.abs(Math.sin(fox.t * 11)) * .07 : Math.sin(fox.t * 2) * .01; inner.rotation.z = moving ? Math.sin(fox.t * 11) * .05 : 0; }
-      else fox.play(moving ? (speed > 3 ? 'run' : 'walk') : 'idle');
+      else if (!fox.manual) fox.play(moving ? (speed > 3 ? 'run' : 'walk') : 'idle');
     } };
-  if (A.gun && fox.hasClips) { const hand = findBone(inner, /RightHand$/); if (hand) { const g = dress(A.gun.scene.clone()); hand.add(g); } }
+  if (withGun && A.gun && fox.hasClips) { const hand = findBone(inner, /RightHand$/); if (hand) { const g = dress(A.gun.scene.clone()); g.rotation.set(GUN_ROT[0], GUN_ROT[1], GUN_ROT[2]); g.position.set(GUN_POS[0], GUN_POS[1], GUN_POS[2]); hand.add(g); fox.gun = g; } }
   fox.play('idle', 0);
   return fox;
 }
+const GUN_ROT = [-Math.PI / 2, 0, 0], GUN_POS = [0, .06, .02];   // the stun gun in the right hand: its barrel (+Z) along the hand bone (+Y)
 function findBone(root, re) { let b = null; root.traverse((o) => { if (!b && o.isBone && re.test(o.name.replace(/^mixamorig:?/, ''))) b = o; }); return b; }
 // clone a skinned scene (bones re-bound), small version of SkeletonUtils.clone
 function cloneSkinned(src) {
@@ -189,7 +193,9 @@ function buildHQ() {
   let screen = null;
   if (A.room) {
     const room = dress(A.room.scene); S.add(room);
-    room.traverse((o) => { const m = o.name.match(/^Pillar_(\d)/); if (m) HQ.pillars[+m[1] - 1] = o; if (o.name === 'Screen') screen = o; });
+    room.traverse((o) => { const m = o.name.match(/^Pillar_(\d)/); if (m) HQ.pillars[+m[1] - 1] = o; if (o.name === 'Screen') screen = o; if (o.name === 'ProjectorTable') HQ.table = o;
+      if (o.name === 'Floor' && o.isMesh) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach((m) => { if (!/glow/i.test(m.name)) { m.metalness = .55; m.roughness = .22; } }); } });
+    room.updateMatrixWorld(true);
   }
   if (HQ.pillars.length < 5 || !screen) {
     // stand-in room until the Blender HQ arrives
@@ -210,7 +216,7 @@ function buildHQ() {
       const frame = new THREE.Mesh(new THREE.BoxGeometry(.12, 3.2, 6.2), new THREE.MeshStandardMaterial({ color: '#1a2444', metalness: .8, roughness: .3 })); frame.position.set(7.38, 2.1, 0); S.add(frame); }
   }
   // the smart board: a canvas on the Screen mesh
-  HQ.boardCv = document.createElement('canvas'); HQ.boardCv.width = 2048; HQ.boardCv.height = 1024; HQ.boardTex = new THREE.CanvasTexture(HQ.boardCv); HQ.boardTex.colorSpace = THREE.SRGBColorSpace;
+  HQ.boardCv = document.createElement('canvas'); HQ.boardCv.width = 2048; HQ.boardCv.height = 1024; HQ.boardTex = new THREE.CanvasTexture(HQ.boardCv); HQ.boardTex.colorSpace = THREE.SRGBColorSpace; if (A.room) HQ.boardTex.flipY = false;   /* (the Blender Screen's UVs run the other way) */
   screen.material = new THREE.MeshBasicMaterial({ map: HQ.boardTex, toneMapped: false }); HQ.screen = screen; drawBoard();
   // glass cases and the artifacts won so far
   HQ.pillars.forEach((p, k) => {
@@ -220,22 +226,29 @@ function buildHQ() {
     const spot = glowSprite('#5ff3ff', .9); spot.position.copy(top).add(new THREE.Vector3(0, .3, 0)); spot.material.opacity = .25; S.add(spot);
   });
   refreshTrophies();
-  // Foxino looking at the globe
-  HQ.fox = makeFoxino(); HQ.fox.root.position.set(-1.35, 0, -2.05); HQ.fox.root.rotation.y = .75; S.add(HQ.fox.root); { const sh = blobShadow(.45); sh.position.set(-1.35, .02, -2.05); S.add(sh); }
-  if (HQ.fox.hasClips) HQ.fox.play('lookatglobe', 0);
+  // where things are: the projector table (the globe floats above it), the board, the trophy gallery
+  const tb = HQ.table ? new THREE.Box3().setFromObject(HQ.table) : null;
+  HQ.gc = tb ? new THREE.Vector3((tb.min.x + tb.max.x) / 2, tb.max.y + .9, (tb.min.z + tb.max.z) / 2) : new THREE.Vector3(0, 1.88, -2);
+  const sb = new THREE.Box3().setFromObject(screen), sc = sb.getCenter(new THREE.Vector3());
+  const pc = HQ.pillars.reduce((a, p) => a.add(p.getWorldPosition(new THREE.Vector3())), new THREE.Vector3()).multiplyScalar(1 / HQ.pillars.length);
+  // Foxino looking at the globe (the Blender spy plays LookAtGlobe: hand on chin, looking up to his left)
+  const fp = HQ.FOX_AT = new THREE.Vector3(HQ.gc.x - 1.75, 0, HQ.gc.z + .55);
+  HQ.fox = makeFoxino(false); HQ.fox.root.position.copy(fp); HQ.fox.root.rotation.y = HQ.fox.hasClips ? .15 : .75; S.add(HQ.fox.root); { const sh = blobShadow(.45); sh.position.set(fp.x, .02, fp.z); S.add(sh); }
+  if (HQ.fox.hasClips) { HQ.fox.manual = true; HQ.fox.play('lookatglobe', 0); }
   buildGlobe();
+  const gw = HQ.gc;
   HQ.views = {
-    center: { p: new THREE.Vector3(0.2, 1.7, 5.4), l: new THREE.Vector3(-.35, 1.35, -2) },
-    left: { p: new THREE.Vector3(-2.4, 1.7, .3), l: new THREE.Vector3(-7, 1.25, 0) },
-    right: { p: new THREE.Vector3(2.2, 2.0, 0), l: new THREE.Vector3(7.3, 2.05, 0) },
-    globe: { p: new THREE.Vector3(.1, 1.98, -.45), l: new THREE.Vector3(0, 1.86, -2) },
+    center: { p: new THREE.Vector3(gw.x + .2, 1.75, gw.z + 7.2), l: new THREE.Vector3(gw.x - .45, 1.4, gw.z) },
+    left: { p: new THREE.Vector3(pc.x + 5.6, 1.75, pc.z + .2), l: new THREE.Vector3(pc.x, 1.15, pc.z) },
+    right: { p: new THREE.Vector3(sc.x - 4.3, sc.y - .05, sc.z), l: sc.clone() },
+    globe: { p: new THREE.Vector3(gw.x + .1, gw.y + .12, gw.z + 2.35), l: new THREE.Vector3(gw.x, gw.y - .02, gw.z) },
   };
   const v = HQ.views.center; camera.position.copy(v.p); HQ.look = v.l.clone(); camera.lookAt(HQ.look);
 }
 function refreshTrophies() {
   HQ.arts.forEach((a) => a && a.parent && a.parent.remove(a)); HQ.arts = [];
   MISSIONS.forEach((m, k) => { const c = HQ.cases[k]; if (!c || !save.done[m.id]) return;
-    const a = artifactModel(m); a.position.copy(c.top).add(new THREE.Vector3(0, .12, 0)); HQ.scene.add(a); HQ.arts[k] = a; });
+    const a = artifactModel(m); a.position.copy(c.top).add(new THREE.Vector3(0, A.case ? .08 : .12, 0)); HQ.scene.add(a); HQ.arts[k] = a; });
 }
 function artifactModel(m) {
   const g = A['art-' + m.artifactKey]; if (g) return fitHeight(dress(g.scene.clone(true)), .3);
@@ -250,7 +263,7 @@ const holoMat = (color, a = .55, grid = 0) => new THREE.ShaderMaterial({ transpa
       float g = 0.0; if (uGrid > 0.5) { vec3 n = normalize(vP); float lat = asin(clamp(n.y,-1.0,1.0)); float lon = atan(n.x, n.z); g = max(smoothstep(0.96, 1.0, abs(cos(lat * 9.0))), smoothstep(0.97, 1.0, abs(cos(lon * 9.0)))) * 0.35; }
       gl_FragColor = vec4(uColor * (f * 1.4 + 0.12 + g) * scan, (f + 0.15 + g) * uA); }` });
 function buildGlobe() {
-  const G = new THREE.Group(); G.position.set(0, 1.88, -2); HQ.scene.add(G); HQ.globe = G; const R = .68; HQ.R = R;
+  const G = new THREE.Group(); G.position.copy(HQ.gc); HQ.scene.add(G); HQ.globe = G; const R = .68; HQ.R = R;
   const spin = new THREE.Group(); G.add(spin); HQ.spin = spin; HQ.mats = [];
   if (A.globe) { A.globe.scene.traverse((o) => { if (!o.isMesh) return; const land = /land/i.test(o.name); const mm = holoMat(land ? '#7af8ff' : '#2a7cff', land ? .9 : .35, land ? 0 : 1); HQ.mats.push(mm); const m = new THREE.Mesh(o.geometry, mm); m.scale.setScalar(R); spin.add(m); }); }
   else { const mm = holoMat('#3a9cff', .45, 1); HQ.mats.push(mm); spin.add(new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32), mm)); }
@@ -283,7 +296,7 @@ function drawBoard() {
   T('MISSIONS', 1400, 120, 40, '#b57bff', 900);
   MISSIONS.forEach((m, i) => { const y = 200 + i * 150, d = save.done[m.id]; g.fillStyle = d ? 'rgba(77,255,166,.08)' : 'rgba(255,255,255,.03)'; g.strokeStyle = d ? 'rgba(77,255,166,.5)' : 'rgba(143,179,214,.25)'; g.beginPath(); g.roundRect(1400, y, 560, 120, 20); g.fill(); g.stroke();
     T(`${m.n}. ${m.name.toUpperCase()}`, 1430, y + 50, 28, d ? '#e8f7ff' : '#8fb3d6'); T(m.place, 1430, y + 92, 22, '#8fb3d6', 600);
-    T(d ? '★'.repeat(d.stars) + '☆'.repeat(3 - d.stars) : 'LOCKED ARTIFACT', 1940, y + 50, d ? 36 : 20, d ? '#ffd36e' : '#55607a', 700, 'right'); });
+    T(d ? '★'.repeat(d.stars) + '☆'.repeat(3 - d.stars) : 'NOT DONE YET', 1940, y + 94, d ? 30 : 18, d ? '#ffd36e' : '#55607a', 700, 'right'); });
   // accuracy bar
   g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(80, 760, 1200, 26); g.fillStyle = '#4dffa6'; g.shadowColor = '#4dffa6'; g.shadowBlur = 16; g.fillRect(80, 760, 12 * acc, 26); g.shadowBlur = 0;
   T('ACCURACY', 80, 740, 24, '#8fb3d6');
@@ -292,11 +305,13 @@ function drawBoard() {
 }
 function setView(v) {
   if (HQ.tw && HQ.tw.to === v) return; SFX.whoosh();
-  const to = HQ.views[v]; HQ.tw = { to: v, p0: camera.position.clone(), l0: HQ.look.clone(), p1: to.p.clone(), l1: to.l.clone(), t: 0, d: v === 'globe' || HQ.view === 'globe' ? 1.4 : 1.0 }; HQ.view = v;
+  const to = v === 'globe' ? globeView() : HQ.views[v]; HQ.tw = { to: v, p0: camera.position.clone(), l0: HQ.look.clone(), p1: to.p.clone(), l1: to.l.clone(), t: 0, d: v === 'globe' || HQ.view === 'globe' ? 1.4 : 1.0 }; HQ.view = v;
   if (v === 'center') { showScreen('hq'); updateHQText(); }
   else if (v === 'globe') { showScreen('globe'); renderMissionList(); $('card').classList.add('hidden-card'); }
   else { showScreen('side'); $('sideTitle').textContent = v === 'left' ? 'TROPHY ROOM' : 'AGENT STATS'; if (v === 'right') drawBoard(); }
 }
+// on a phone held upright the globe needs the camera further back (the mission card covers the lower half)
+function globeView() { const G = HQ.views.globe, c = HQ.gc; return camera.aspect < .8 ? { p: new THREE.Vector3(c.x + .05, c.y + .57, c.z + 3.35), l: new THREE.Vector3(c.x, c.y - .26, c.z) } : G; }
 function updateHQText() { $('hqRank').textContent = rankName(); $('hqStars').textContent = `${totalStars()} ★ · ${missionsDone()}/5 missions`; $('hqHint').textContent = missionsDone() === 5 ? 'Every artifact is home. Play again for 3 stars!' : 'Agent Foxino is waiting for his next mission'; }
 function renderMissionList() {
   $('missionList').innerHTML = MISSIONS.map((m) => { const d = save.done[m.id]; return `<button class="m-chip${HQ.selected === m ? ' on' : ''}" data-id="${m.id}" style="--c:${m.color}"><i>${m.n}</i><div><b>${esc(m.name)}</b><span>${esc(m.place)}</span></div><em>${d ? '★'.repeat(d.stars) : ''}</em></button>`; }).join('');
@@ -341,6 +356,7 @@ let mode = 'loading', mission = null, room = null;
 async function startMission(m) {
   SFX.click(); mission = { m, stage: 0, stats: { asked: 0, right: 0, spotted: 0 }, missed: [], t0: performance.now() };
   Q.level = clamp(Math.floor((m.n - 1) / 2), 0, 2); Q.again = [];
+  if (!(m.id in A.kits)) { toast('LOADING MISSION…', 'info', 4000); await loadKit(m.id); $('toast').className = ''; }
   $('hudMission').textContent = `MISSION ${m.n} · ${m.name.toUpperCase()}`;
   await runStages();
 }
@@ -357,7 +373,7 @@ async function runStages() {
   if (mission) finishMission();
 }
 function stageBackdrop() { // the HQ hologram view stays behind the story screens
-  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; camera.position.copy(HQ.views.globe.p); HQ.look.copy(HQ.views.globe.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.spinTo = { x: THREE.MathUtils.degToRad(m.lat) * .75, y: -THREE.MathUtils.degToRad(m.lon) }; }
+  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; const gv = globeView(); camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.spinTo = { x: THREE.MathUtils.degToRad(m.lat) * .75, y: -THREE.MathUtils.degToRad(m.lon) }; }
 }
 function briefing(st) {
   return new Promise((resolve) => {
@@ -419,40 +435,69 @@ const anyOverlay = () => document.querySelector('.overlay.show') !== null;
   J.addEventListener('pointerup', end); J.addEventListener('pointercancel', end); }
 $('btnStun').onclick = () => stun(); $('btnUse').onclick = () => use(); $('hudPause').onclick = () => pauseRoom();
 
+// the location kits from Blender (kit-<mission>-<piece>.glb): loaded when a mission starts; rooms fall back to blocks
+const KIT_PIECES = ['floor', 'floor-2', 'wall', 'door', 'crate', 'terminal', 'pedestal', 'decor-1', 'decor-2', 'decor-3'];
+A.kits = {};
+async function loadKit(id) {
+  if (id in A.kits) return A.kits[id]; const out = {};
+  await Promise.all(KIT_PIECES.map(async (k) => { const g = await tryLoad(`models/kit-${id}-${k}.glb?v=1`); if (g) out[k] = dress(g.scene); }));
+  return (A.kits[id] = out.wall && out.floor ? out : null);
+}
+// one InstancedMesh per mesh of a model, one instance per matrix
+function instancedModel(S, model, mats) {
+  if (!mats.length) return; model.updateMatrixWorld(true); const m = new THREE.Matrix4();
+  model.traverse((o) => { if (!o.isMesh) return; const im = new THREE.InstancedMesh(o.geometry, o.material, mats.length); mats.forEach((M, i) => im.setMatrixAt(i, m.multiplyMatrices(M, o.matrixWorld))); im.castShadow = false; S.add(im); });
+}
 function parseMap(rows) { const w = Math.max(...rows.map((r) => r.length)); return rows.map((r) => r.padEnd(w, '#').split('')); }
 function playRoom(st) {
   return new Promise((resolve) => {
     disposeRoom(); const th = mission.m.theme, grid = parseMap(st.map), H = grid.length, W = grid[0].length;
     const S = new THREE.Scene(); S.background = new THREE.Color(th.fog); S.fog = new THREE.Fog(th.fog, 18, 46);
-    S.add(new THREE.HemisphereLight(th.light, '#ffffff', 1.7)); const sun = new THREE.DirectionalLight('#ffffff', 1.6); sun.position.set(-6, 14, 8); S.add(sun);
+    const hasKit = !!A.kits[mission.m.id], hemi = new THREE.HemisphereLight(th.light, hasKit ? th.fog : '#ffffff', hasKit ? (th.kitLight ?? .95) : 1.7); S.add(hemi); const sun = new THREE.DirectionalLight(hasKit ? th.light : '#ffffff', hasKit ? .9 : 1.6); sun.position.set(-6, 14, 8); S.add(sun);
     const ox = -(W - 1) * CELL / 2, oz = -(H - 1) * CELL / 2, cpos = (c, r) => new THREE.Vector3(ox + c * CELL, 0, oz + r * CELL);
     const R = room = { st, S, grid, W, H, ox, oz, cpos, guards: [], cams: [], lines: [], doors: [], gates: [], terms: [], resolve, start: null, exit: null, art: null, hasArt: false, cooldown: 0, busy: false, time: st.time || 0, t: 0, bolts: [], zz: [] };
     // floor and walls (instanced cubes: stand-ins until the location kits arrive from Blender)
     const floorM = new THREE.MeshStandardMaterial({ color: th.floor, roughness: .45, metalness: .3 }), wallM = new THREE.MeshStandardMaterial({ color: new THREE.Color(th.wall).multiplyScalar(.75), roughness: .7, metalness: .2 });
     const cells = [], walls = [];
     grid.forEach((row, r) => row.forEach((ch, c) => { if (ch === '#') walls.push([c, r]); else if (ch !== ' ') cells.push([c, r]); }));
-    const fl = new THREE.InstancedMesh(new THREE.BoxGeometry(CELL * .98, .2, CELL * .98), floorM, cells.length), m4 = new THREE.Matrix4();
+    const KIT = A.kits[mission.m.id] || null; R.kit = KIT; const m4 = new THREE.Matrix4(), at = (p, ry = 0) => new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ry), new THREE.Vector3(1, 1, 1));
+    if (KIT) {
+      const runner = st.type === 'escape' && KIT['floor-2'];
+      instancedModel(S, runner ? KIT['floor-2'] : KIT.floor, cells.map(([c, r]) => at(cpos(c, r))));
+      instancedModel(S, KIT.wall, walls.map(([c, r]) => at(cpos(c, r))));
+    } else {
+    const fl = new THREE.InstancedMesh(new THREE.BoxGeometry(CELL * .98, .2, CELL * .98), floorM, cells.length);
     cells.forEach(([c, r], i) => { const p = cpos(c, r); m4.makeTranslation(p.x, -.1, p.z); fl.setMatrixAt(i, m4); }); S.add(fl);
     const wl = new THREE.InstancedMesh(new THREE.BoxGeometry(CELL, WALL_H, CELL), wallM, walls.length);
     walls.forEach(([c, r], i) => { const p = cpos(c, r); m4.makeTranslation(p.x, WALL_H / 2, p.z); wl.setMatrixAt(i, m4); }); S.add(wl);
+    }
     const open = (c, r) => { const ch = (grid[r] || [])[c]; return ch !== undefined && ch !== '#' && ch !== ' '; }, strips = [];
     walls.forEach(([c, r]) => { for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (open(c + dc, r + dr)) strips.push([c, r, dc, dr]); });
+    if (KIT) strips.length = 0;   // (the kit walls carry their own trim)
     const trim = new THREE.InstancedMesh(new THREE.BoxGeometry(CELL, .07, .07), neon(th.trim), strips.length), q4 = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
     strips.forEach(([c, r, dc, dr], i) => { const p = cpos(c, r); q4.setFromAxisAngle(new THREE.Vector3(0, 1, 0), dc ? Math.PI / 2 : 0); m4.compose(new THREE.Vector3(p.x + dc * (CELL / 2 - .04), WALL_H - .15, p.z + dr * (CELL / 2 - .04)), q4, one); trim.setMatrixAt(i, m4); }); S.add(trim);
     const low = new THREE.InstancedMesh(new THREE.BoxGeometry(CELL, .05, .05), neon(th.accent), strips.length);
     strips.forEach(([c, r, dc, dr], i) => { const p = cpos(c, r); q4.setFromAxisAngle(new THREE.Vector3(0, 1, 0), dc ? Math.PI / 2 : 0); m4.compose(new THREE.Vector3(p.x + dc * (CELL / 2 + .005), .25, p.z + dr * (CELL / 2 + .005)), q4, one); low.setMatrixAt(i, m4); }); S.add(low);
     const lineM = new THREE.InstancedMesh(new THREE.PlaneGeometry(CELL * .94, CELL * .94).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: th.trim, transparent: true, opacity: .08, depthWrite: false }), cells.length);
-    cells.forEach(([c, r], i) => { const p = cpos(c, r); m4.makeTranslation(p.x, .005, p.z); lineM.setMatrixAt(i, m4); }); S.add(lineM);
+    cells.forEach(([c, r], i) => { const p = cpos(c, r); m4.makeTranslation(p.x, .005, p.z); lineM.setMatrixAt(i, m4); }); if (!KIT) S.add(lineM);
+    // decor against the back walls (the kit's paintings, statues…): never on a start, exit, terminal or path end
+    if (KIT) { const decs = ['decor-1', 'decor-2', 'decor-3'].filter((k) => KIT[k]); let n = 0;
+      cells.forEach(([c, r]) => { if (n >= 4 || !decs.length || grid[r][c] !== '.' || (grid[r - 1] || [])[c] !== '#' || Math.random() > .22) return; const free = [[1, 0], [-1, 0]].every(([dc]) => (grid[r][c + dc] || '#') !== 'S'); if (!free) return;
+        const d = KIT[pick(decs)].clone(true); d.position.copy(cpos(c, r)); S.add(d); n++; }); }
     // objects
     const laserRows = new Map();
     grid.forEach((row, r) => row.forEach((ch, c) => {
       const p = cpos(c, r);
       if (ch === 'S') R.start = p.clone();
       else if (ch === 'X') { R.exit = { p, ring: new THREE.Mesh(new THREE.RingGeometry(.55, .75, 40).rotateX(-Math.PI / 2), neon(th.trim)) }; R.exit.ring.position.copy(p).setY(.03); S.add(R.exit.ring); R.exit.glow = glowSprite(th.trim, 2.2); R.exit.glow.position.copy(p).setY(.8); S.add(R.exit.glow); }
+      else if (ch === 'o' && KIT && KIT.crate) { const b = KIT.crate.clone(true); b.position.copy(p); b.rotation.y = Math.floor(rand(0, 4)) * Math.PI / 2; S.add(b); }
       else if (ch === 'o') { const b = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, 1.5), new THREE.MeshStandardMaterial({ color: th.wall, roughness: .6 })); b.position.copy(p).setY(.6); b.rotation.y = rand(-.2, .2); S.add(b); const e = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.5, 1.2, 1.5)), new THREE.LineBasicMaterial({ color: th.accent, toneMapped: false })); e.position.copy(b.position); e.rotation.y = b.rotation.y; S.add(e); }
+      else if (ch === 'T' && KIT && KIT.terminal) { const t = new THREE.Group(); t.add(KIT.terminal.clone(true)); const gl = glowSprite(th.accent, 1.4); gl.position.y = 1.35; t.add(gl); t.position.copy(p); S.add(t); R.terms.push({ p, obj: t, gl }); }
       else if (ch === 'T') { const t = new THREE.Group(); const base = new THREE.Mesh(new THREE.BoxGeometry(.7, 1, .5), new THREE.MeshStandardMaterial({ color: '#1b2440', metalness: .7, roughness: .3 })); base.position.y = .5; t.add(base); const scr = new THREE.Mesh(new THREE.PlaneGeometry(.6, .4), neon(th.accent)); scr.position.set(0, 1.05, .1); scr.rotation.x = -.6; t.add(scr); const gl = glowSprite(th.accent, 1.4); gl.position.y = 1.2; t.add(gl); t.position.copy(p); S.add(t); R.terms.push({ p, obj: t, gl }); }
-      else if (ch === 'D') { const d = new THREE.Mesh(new THREE.BoxGeometry(CELL * .96, WALL_H, CELL * .96), new THREE.MeshStandardMaterial({ color: '#2a3150', emissive: th.accent, emissiveIntensity: .25, metalness: .6, roughness: .3 })); d.position.copy(p).setY(WALL_H / 2); S.add(d); R.doors.push({ c, r, mesh: d, open: false, y: 0 }); }
+      else if (ch === 'D' && KIT && KIT.door) { const d = KIT.door.clone(true); d.position.copy(p); S.add(d); R.doors.push({ c, r, mesh: d, open: false, y: 0, base: 0 }); }
+      else if (ch === 'D') { const d = new THREE.Mesh(new THREE.BoxGeometry(CELL * .96, WALL_H, CELL * .96), new THREE.MeshStandardMaterial({ color: '#2a3150', emissive: th.accent, emissiveIntensity: .25, metalness: .6, roughness: .3 })); d.position.copy(p).setY(WALL_H / 2); S.add(d); R.doors.push({ c, r, mesh: d, open: false, y: 0, base: WALL_H / 2 }); }
       else if (ch === 'G') { const g = new THREE.Mesh(new THREE.BoxGeometry(CELL * .96, 1.8, .2), new THREE.MeshBasicMaterial({ color: th.accent, transparent: true, opacity: .45, toneMapped: false })); g.position.copy(p).setY(.9); g.rotation.y = Math.PI / 2; S.add(g); R.gates.push({ c, r, p, mesh: g, open: false }); }
+      else if (ch === 'A' && KIT && KIT.pedestal) { const pd = KIT.pedestal.clone(true); pd.position.copy(p); S.add(pd); const a = artifactModel(mission.m); a.position.copy(p).setY(.91); S.add(a); R.art = { p, obj: a }; R.hasArt = true; }
       else if (ch === 'A') { const pd = new THREE.Mesh(new THREE.CylinderGeometry(.45, .55, .9, 24), new THREE.MeshStandardMaterial({ color: '#c8d4ea', metalness: .8, roughness: .25 })); pd.position.copy(p).setY(.45); S.add(pd); const a = artifactModel(mission.m); a.position.copy(p).setY(.92); S.add(a); R.art = { p, obj: a }; R.hasArt = true; }
       else if (ch === 'h' || ch === 'v') R.guards.push(makeGuard(p, ch === 'h' ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1), S));
       else if (ch === 'c') R.cams.push(makeCam(p, S, th));
@@ -521,6 +566,7 @@ function roomFrame(dt, t) {
   R.fox.root.position.copy(R.pos); R.fox.root.rotation.y = R.face; R.shadow.position.set(R.pos.x, .02, R.pos.z); R.fox.update(dt, mag > .1, speed);
   // camera follows
   const want = R.pos.clone().add(new THREE.Vector3(0, camera.aspect < .8 ? 12 : 9.5, camera.aspect < .8 ? 5 : 4.2)); R.camPos.lerp(want, Math.min(1, dt * 4)); camera.position.copy(R.camPos); camera.lookAt(R.pos.x, .4, R.pos.z - .5);
+  if (R.camLock) { camera.position.copy(R.camLock.p); camera.lookAt(R.camLock.l); }   // (test hook: a fixed close-up)
   // exit
   if (R.exit) { const locked = R.hasArt && !R.art.taken; R.exit.ring.material.color.set(locked ? '#ff3a5a' : mission.m.theme.trim); R.exit.ring.rotation.y += dt; R.exit.glow.material.opacity = .5 + Math.sin(t * 4) * .3;
     if (!paused && !locked && R.pos.distanceTo(R.exit.p) < .9) { roomDone(); return; } }
@@ -533,7 +579,7 @@ function roomFrame(dt, t) {
   const gate = R.gates.find((g) => !g.open && Math.hypot(R.pos.x - g.p.x, R.pos.z - g.p.z) < 1.5);
   if (gate && !paused) gateQuestion(gate);
   // doors slide up when open
-  for (const d of R.doors) { if (d.open && d.y < WALL_H) { d.y = Math.min(WALL_H, d.y + dt * 3); d.mesh.position.y = WALL_H / 2 + d.y; } }
+  for (const d of R.doors) { if (d.open && d.y < WALL_H) { d.y = Math.min(WALL_H, d.y + dt * 3); d.mesh.position.y = d.base + d.y; } }
   for (const g of R.gates) if (g.open) g.mesh.material.opacity = Math.max(0, g.mesh.material.opacity - dt);
   // timer
   if (R.st.type === 'escape' && !paused) { R.time -= dt; const s = Math.max(0, Math.ceil(R.time)); $('hudTimer').textContent = `⏱ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; $('hudTimer').className = 'timer' + (R.time < 15 ? ' low' : ''); if (R.time <= 0) { failRoom('TOO SLOW!'); return; } }

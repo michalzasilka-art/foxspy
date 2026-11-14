@@ -180,9 +180,9 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 
 #toast { position: fixed; left: 50%; top: 30%; transform: translate(-50%, -50%) scale(.8); z-index: 30; font-family: var(--hud); font-weight: 900; font-size: clamp(28px, 7vw, 56px); letter-spacing: .1em; opacity: 0; pointer-events: none; transition: opacity .2s, transform .3s; text-align: center; }
 #toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-#toast.bad { color: var(--bad); text-shadow: 0 0 24px var(--bad); }
-#toast.ok { color: var(--ok); text-shadow: 0 0 24px var(--ok); }
-#toast.info { color: var(--cy); text-shadow: 0 0 24px var(--cy); }
+#toast.bad { color: var(--bad); text-shadow: 0 0 24px var(--bad), 0 2px 0 #04121f; -webkit-text-stroke: 1.5px #04121f; }
+#toast.ok { color: var(--ok); text-shadow: 0 0 24px var(--ok), 0 2px 0 #04121f; -webkit-text-stroke: 1.5px #04121f; }
+#toast.info { color: var(--cy); text-shadow: 0 0 24px var(--cy), 0 2px 0 #04121f, 0 0 6px #04121f; -webkit-text-stroke: 1.5px #04121f; }
 #flash { position: fixed; inset: 0; z-index: 25; pointer-events: none; opacity: 0; transition: opacity .4s; }
 #flash.red { background: radial-gradient(ellipse at center, transparent 40%, rgba(255,40,70,.55)); opacity: 1; transition: none; }
 #flash.white { background: rgba(255,255,255,.55); opacity: 1; transition: none; }
