@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>FoxSpy</title>
+<meta name="theme-color" content="#060a1a">
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Exo+2:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="scan"></div>
+
+<!-- loading -->
+<div id="loading" class="screen show">
+  <div class="load-box">
+    <div class="logo"><span>FOX</span>SPY</div>
+    <div class="load-sub">Secure connection to HQ…</div>
+    <div class="bar"><i id="loadBar"></i></div>
+  </div>
+</div>
+
+<!-- HQ: the menu room -->
+<div id="hq" class="screen">
+  <div class="topbar">
+    <div class="logo small"><span>FOX</span>SPY</div>
+    <div class="agent"><b id="hqRank">Rookie</b><i id="hqStars">0 ★</i></div>
+    <button class="icon-btn" id="btnSettings" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7zm7.4-2.5l2 1.6-2 3.4-2.4-1a7.6 7.6 0 0 1-2 1.2L14.6 21h-4l-.4-2.8a7.6 7.6 0 0 1-2-1.2l-2.4 1-2-3.4 2-1.6a7.8 7.8 0 0 1 0-2.4L3.8 9 5.8 5.6l2.4 1a7.6 7.6 0 0 1 2-1.2L10.6 3h4l.4 2.4a7.6 7.6 0 0 1 2 1.2l2.4-1 2 3.4-2 1.6a7.8 7.8 0 0 1 0 2.4z"/></svg></button>
+  </div>
+  <button class="side-arrow left" id="goTrophy"><svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8"/></svg><span>TROPHY<br>ROOM</span></button>
+  <button class="side-arrow right" id="goStats"><span>AGENT<br>STATS</span><svg viewBox="0 0 24 24"><path d="M9 4l8 8-8 8"/></svg></button>
+  <div class="hq-bottom">
+    <div class="hq-hint" id="hqHint">Agent Foxino is waiting for his next mission</div>
+    <button class="holo-btn big" id="btnSelect"><span>SELECT MISSION</span></button>
+  </div>
+</div>
+
+<!-- side views -->
+<div id="side" class="screen">
+  <div class="topbar"><div class="side-title" id="sideTitle">TROPHY ROOM</div></div>
+  <div id="labels"></div>
+  <button class="side-arrow back" id="sideBack"><svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8"/></svg><span>HQ</span></button>
+</div>
+
+<!-- globe: mission select -->
+<div id="globe" class="screen">
+  <div class="topbar"><button class="holo-btn small" id="globeBack">← HQ</button><div class="side-title">SELECT A MISSION</div></div>
+  <div class="mission-list" id="missionList"></div>
+  <div class="card hidden-card" id="card">
+    <div class="card-head"><i id="cardN">MISSION 1</i><b id="cardName">Operation Moonlight</b><span id="cardPlace">Paris, France</span></div>
+    <p id="cardStory"></p>
+    <div class="card-meta"><span id="cardTime">⏱ 5–7 min</span><span id="cardArt">◆ Moon Diamond</span><span id="cardBest"></span></div>
+    <button class="holo-btn" id="cardStart"><span>START MISSION</span></button>
+  </div>
+</div>
+
+<!-- mission HUD -->
+<div id="hud" class="screen">
+  <div class="hud-top">
+    <div class="hud-mission"><i id="hudMission">OPERATION MOONLIGHT</i><b id="hudStage">The Painting Gallery</b><span id="hudGoal">Sneak to the stairs.</span></div>
+    <div class="hud-stats"><span id="hudTimer" class="timer"></span><span>👁 <b id="hudSpotted">0</b></span><button class="icon-btn" id="hudPause" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg></button></div>
+  </div>
+  <div class="prompt" id="prompt">Press <b>E</b> to use the terminal</div>
+  <div id="joy"><i id="joyKnob"></i></div>
+  <div class="hud-btns">
+    <button class="act" id="btnUse"><span>USE</span></button>
+    <button class="act stun" id="btnStun"><span>STUN</span><i id="stunFill"></i></button>
+  </div>
+  <div class="keys">WASD / arrows: move · Space: stun · E: use</div>
+</div>
+
+<!-- question gadget (terminals, gates, decoder, vault) -->
+<div id="quiz" class="overlay">
+  <div class="gadget">
+    <div class="g-head"><i id="qKicker">LASER CONTROL</i><b id="qTitle">Answer to switch off a laser</b></div>
+    <div class="g-visual" id="qVisual"></div>
+    <div class="g-sentence" id="qSentence"></div>
+    <div class="g-opts" id="qOpts"></div>
+    <div class="g-feedback" id="qFeedback"></div>
+  </div>
+</div>
+
+<!-- briefing / story -->
+<div id="brief" class="overlay">
+  <div class="brief-box">
+    <div class="holo-caller"><div class="caller-ring"></div><div class="caller-face">HQ</div></div>
+    <div class="brief-text"><i id="briefKicker">INCOMING CALL</i><b id="briefTitle">Incoming call from HQ</b><p id="briefText"></p></div>
+    <div class="brief-btns"><button class="holo-btn small" id="briefSpeak">🔊 Listen</button><button class="holo-btn" id="briefGo"><span>CONTINUE</span></button></div>
+  </div>
+</div>
+
+<!-- mission report -->
+<div id="report" class="overlay">
+  <div class="report-box">
+    <i class="kicker">MISSION COMPLETE</i>
+    <b id="repName">Operation Moonlight</b>
+    <div class="stars" id="repStars">★★★</div>
+    <div class="rep-grid">
+      <div><i>TIME</i><b id="repTime">5:12</b></div>
+      <div><i>RIGHT ANSWERS</i><b id="repAcc">90 %</b></div>
+      <div><i>SPOTTED</i><b id="repSpot">1×</b></div>
+    </div>
+    <div class="rep-art" id="repArt">◆ The Moon Diamond is now in your Trophy Room!</div>
+    <div class="rep-words"><i>PRACTISE THESE</i><div id="repMissed"></div></div>
+    <button class="holo-btn" id="repHome"><span>BACK TO HQ</span></button>
+  </div>
+</div>
+
+<!-- pause -->
+<div id="pause" class="overlay">
+  <div class="report-box">
+    <i class="kicker">PAUSED</i><b>Mission on hold</b>
+    <button class="holo-btn" id="pResume"><span>CONTINUE</span></button>
+    <button class="holo-btn small" id="pRestart">Restart this room</button>
+    <button class="holo-btn small" id="pQuit">Leave the mission</button>
+  </div>
+</div>
+
+<!-- settings -->
+<div id="settings" class="overlay">
+  <div class="report-box">
+    <i class="kicker">SETTINGS</i><b>Agent equipment</b>
+    <button class="pack-btn" id="setPack"><i>QUESTIONS</i><b id="setPackTitle">Choose packages</b><span id="setPackSub"></span></button>
+    <label class="row-set"><span>Sound</span><input type="checkbox" id="setSound" checked></label>
+    <label class="row-set"><span>Read stories aloud</span><input type="checkbox" id="setVoice" checked></label>
+    <label class="row-set"><span>Graphics</span><select id="setGfx"><option value="high">High</option><option value="low">Low (faster)</option></select></label>
+    <button class="holo-btn" id="setClose"><span>DONE</span></button>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="flash"></div>
+
+<script src="packages.js?v=1"></script>
+<script src="/shared/pack-picker.js?v=8"></script>
+<script type="module" src="game.js?v=1"></script>
+</body>
+</html>
