@@ -17,7 +17,7 @@ export const MISSIONS = [
     theme: { floor: '#2c2f4a', wall: '#3f4570', trim: '#7ad7ff', accent: '#ffd36e', light: '#9fc4ff', fog: '#10132a' },
     story: 'The Magpie is going to swap the famous Moon Diamond for a glass fake during tonight\'s gala. Get in through the roof, pass the laser hall, open the display vault and put the real diamond back before midnight!',
     stages: [
-      { type: 'brief', title: 'Incoming call from HQ', text: 'Good evening, Agent Foxino. The Magpie\'s Bolt-Bots are patrolling the museum. Stay out of their torch beams and the camera cones. Your stun laser makes a Bolt-Bot sleep for a few seconds. Ready?' },
+      { type: 'brief', scene: 'laugh', title: 'Incoming call from HQ', text: 'Good evening, Agent Foxino. The Magpie\'s Bolt-Bots are patrolling the museum. Stay out of their torch beams and the camera cones. Your stun laser makes a Bolt-Bot sleep for a few seconds. Ready?' },
       { type: 'sneak', title: 'The Painting Gallery', goal: 'Sneak to the stairs. Avoid the torch beams.', map: [
         '##############',
         '#S...#.......#',
@@ -64,7 +64,7 @@ export const MISSIONS = [
     theme: { floor: '#24163a', wall: '#3b2160', trim: '#ff6ec7', accent: '#5ff3ff', light: '#ff9be0', fog: '#140a24' },
     story: 'Bolt-Bots have stolen the Sakura Chip that runs the city\'s trains. Ride the glass lifts, hack the door terminals and win the chip back before every train in Tokyo stops!',
     stages: [
-      { type: 'brief', title: 'Incoming call from HQ', text: 'Agent Foxino, the trains are slowing down! The chip is on the 88th floor. The tower is full of cameras, so watch the cones and move when they look away.' },
+      { type: 'brief', scene: 'laugh', title: 'Incoming call from HQ', text: 'Agent Foxino, the trains are slowing down! The chip is on the 88th floor. The tower is full of cameras, so watch the cones and move when they look away.' },
       { type: 'sneak', title: 'The Server Floor', goal: 'Find the lift. The cameras sweep left and right.', map: [
         '##############',
         '#S..c.....c..#',
@@ -111,7 +111,7 @@ export const MISSIONS = [
     theme: { floor: '#5a4128', wall: '#8a6a3f', trim: '#ffc94a', accent: '#3fe0c8', light: '#ffd9a0', fog: '#2a1a0c' },
     story: 'The Magpie is digging for the Golden Scarab, hidden in the Sun Tomb for 4,000 years. Read the hieroglyph locks, dodge the beams of sunlight and reach the treasure chamber first!',
     stages: [
-      { type: 'brief', title: 'Incoming call from HQ', text: 'Agent Foxino, the Magpie\'s diggers are already inside the pyramid. The old locks speak in words: answer them right and the stone doors move.' },
+      { type: 'brief', scene: 'laugh', title: 'Incoming call from HQ', text: 'Agent Foxino, the Magpie\'s diggers are already inside the pyramid. The old locks speak in words: answer them right and the stone doors move.' },
       { type: 'sneak', title: 'The Long Passage', goal: 'Follow the passage. The diggers have torches!', map: [
         '################',
         '#S.....o.......#',
@@ -156,7 +156,7 @@ export const MISSIONS = [
     theme: { floor: '#cfe6f2', wall: '#8fc2dc', trim: '#5ff3ff', accent: '#b57bff', light: '#e6f7ff', fog: '#a9d0e6' },
     story: 'The Magpie\'s storm machine is freezing the sea and the ships can\'t move. Cross the ice laser maze, slide past the patrols and shut the machine down with the Snowflake Key.',
     stages: [
-      { type: 'brief', title: 'Incoming call from HQ', text: 'Brrr, Agent Foxino! The base is hidden under the glacier. The machine has a lock only the Snowflake Key can open, and the key is in the base.' },
+      { type: 'brief', scene: 'laugh', title: 'Incoming call from HQ', text: 'Brrr, Agent Foxino! The base is hidden under the glacier. The machine has a lock only the Snowflake Key can open, and the key is in the base.' },
       { type: 'sneak', title: 'The Ice Tunnels', goal: 'Find the way through the tunnels.', map: [
         '###############',
         '#S..#.....#...#',

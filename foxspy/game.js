@@ -5,7 +5,7 @@
 // 3D: the Blender models in models/ (made on the Windows PC); until each one arrives a stand-in is used.
 import * as THREE from './lib/three.module.min.js';
 import { GLTFLoader } from './lib/GLTFLoader.js';
-import { MISSIONS, RANKS } from './missions.js?v=3';
+import { MISSIONS, RANKS } from './missions.js?v=4';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -378,17 +378,18 @@ function stageBackdrop() { // the HQ hologram view stays behind the story screen
 }
 function magpieSet(kind) {
   if (!A.magpie) return null; const set = makeSet('#0e1120'), mp = new THREE.Group(), rg = rigged(A.magpie, 1.5); mp.add(rg.inner); set.S.add(mp); rg.play(kind === 'caught' ? 'caught' : 'laugh', 0);
-  if (kind === 'caught' && A.net) { const n = A.net.scene.clone(true); dress(n); fitHeight(n, 1.7); set.S.add(n); }
+  if (kind === 'caught' && A.net) { const n = A.net.scene.clone(true); dress(n); set.S.add(n); }   // (the net is modelled to fit over her sitting)
   const glow = glowSprite('#b57bff', 6); glow.position.set(0, 1, -1.5); glow.material.opacity = .35; set.S.add(glow);
-  set.cam.position.set(.6, 1.2, 3.4); set.cam.lookAt(0, .85, 0); set.upd.push((dt, t) => { rg.mixer.update(dt); mp.rotation.y = Math.sin(t * .4) * .25; });
+  set.cam.position.set(.35, 1.05, 2.5); set.cam.lookAt(0, .45, 0);   // (she stands in the top half, over the story panel)
+  const sp = new THREE.SpotLight('#ffe9c8', 60, 12, .5, .5, 1.2); sp.position.set(1.5, 4, 3); sp.target.position.set(0, .7, 0); set.S.add(sp, sp.target); const fill = new THREE.PointLight('#b57bff', 18, 8, 1.5); fill.position.set(-1.6, 1.4, 1.2); set.S.add(fill); set.upd.push((dt, t) => { rg.mixer.update(dt); mp.rotation.y = Math.sin(t * .4) * .25; });
   return set;
 }
 function briefing(st) {
   return new Promise((resolve) => {
-    stageBackdrop(); if (st.scene) { SET = magpieSet(st.scene); if (SET) mode = 'set'; } $('briefKicker').textContent = mission.stage === 0 ? `MISSION ${mission.m.n} · ${mission.m.place.toUpperCase()}` : 'MESSAGE FROM HQ';
+    stageBackdrop(); if (st.scene) { SET = magpieSet(st.scene); if (SET) { mode = 'set'; $('brief').classList.add('low'); } } $('briefKicker').textContent = mission.stage === 0 ? `MISSION ${mission.m.n} · ${mission.m.place.toUpperCase()}` : 'MESSAGE FROM HQ';
     $('briefTitle').textContent = st.title; $('briefText').textContent = st.text; overlay('brief', true); speak(st.text);
     $('briefSpeak').onclick = () => speak(st.text);
-    $('briefGo').onclick = () => { SFX.click(); try { speechSynthesis.cancel(); } catch (e) {} overlay('brief', false); SET = null; if (mode === 'set') mode = 'hq'; resolve(); };
+    $('briefGo').onclick = () => { SFX.click(); try { speechSynthesis.cancel(); } catch (e) {} overlay('brief', false); $('brief').classList.remove('low'); SET = null; if (mode === 'set') mode = 'hq'; resolve(); };
   });
 }
 async function decode(st) {
