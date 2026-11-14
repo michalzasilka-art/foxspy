@@ -202,7 +202,7 @@ export const MISSIONS = [
     theme: { floor: '#1f2433', wall: '#384260', trim: '#b57bff', accent: '#ffd36e', light: '#cdb8ff', fog: '#0e1120' },
     story: 'The finale! The Magpie wants the Crown of Stars from the world\'s safest vault. Crack the giant round vault door, cross the laser floor and catch the Magpie on the roof before she flies away.',
     stages: [
-      { type: 'brief', title: 'Incoming call from HQ', text: 'This is it, Agent Foxino. The Star Bank has the best security in the world, and the Magpie is already inside. Use everything you have learned!' },
+      { type: 'brief', scene: 'laugh', title: 'Incoming call from HQ', text: 'This is it, Agent Foxino. The Star Bank has the best security in the world, and the Magpie is already inside. Use everything you have learned!' },
       { type: 'sneak', title: 'The Bank Lobby', goal: 'Cross the lobby. Cameras AND Bolt-Bots!', map: [
         '################',
         '#S.....c.......#',
@@ -243,7 +243,7 @@ export const MISSIONS = [
         '###############',
         '#S...G...G...G...X#',
         '####################'] },
-      { type: 'brief', title: 'Caught!', text: 'The stun-net drops over the Magpie just as the police drone arrives. "My shiny crown!" she cries. HQ cheers: Agent Foxino, you are a Super Spy!' },
+      { type: 'brief', scene: 'caught', title: 'Caught!', text: 'The stun-net drops over the Magpie just as the police drone arrives. "My shiny crown!" she cries. HQ cheers: Agent Foxino, you are a Super Spy!' },
     ],
   },
 ];

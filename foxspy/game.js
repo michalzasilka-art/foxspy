@@ -5,7 +5,7 @@
 // 3D: the Blender models in models/ (made on the Windows PC); until each one arrives a stand-in is used.
 import * as THREE from './lib/three.module.min.js';
 import { GLTFLoader } from './lib/GLTFLoader.js';
-import { MISSIONS, RANKS } from './missions.js?v=2';
+import { MISSIONS, RANKS } from './missions.js?v=3';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -68,6 +68,7 @@ async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
     ['fox', 'models/foxino-spy.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=1'],
     ['case', 'models/glass-case.glb?v=1'], ['globe', 'models/globe.glb?v=1'],
+    ['bot', 'models/bolt-bot.glb?v=1'], ['secam', 'models/security-camera.glb?v=1'], ['emitter', 'models/laser-emitter.glb?v=1'], ['vaultdoor', 'models/vault-door.glb?v=1'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=1'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=1`]),
   ];
   await Promise.all(list.map(async ([k, u]) => { A[k] = await tryLoad(u); bar.style.width = (++done / list.length * 100) + '%'; }));
@@ -375,12 +376,19 @@ async function runStages() {
 function stageBackdrop() { // the HQ hologram view stays behind the story screens
   mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; const gv = globeView(); camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.spinTo = { x: THREE.MathUtils.degToRad(m.lat) * .75, y: -THREE.MathUtils.degToRad(m.lon) }; }
 }
+function magpieSet(kind) {
+  if (!A.magpie) return null; const set = makeSet('#0e1120'), mp = new THREE.Group(), rg = rigged(A.magpie, 1.5); mp.add(rg.inner); set.S.add(mp); rg.play(kind === 'caught' ? 'caught' : 'laugh', 0);
+  if (kind === 'caught' && A.net) { const n = A.net.scene.clone(true); dress(n); fitHeight(n, 1.7); set.S.add(n); }
+  const glow = glowSprite('#b57bff', 6); glow.position.set(0, 1, -1.5); glow.material.opacity = .35; set.S.add(glow);
+  set.cam.position.set(.6, 1.2, 3.4); set.cam.lookAt(0, .85, 0); set.upd.push((dt, t) => { rg.mixer.update(dt); mp.rotation.y = Math.sin(t * .4) * .25; });
+  return set;
+}
 function briefing(st) {
   return new Promise((resolve) => {
-    stageBackdrop(); $('briefKicker').textContent = mission.stage === 0 ? `MISSION ${mission.m.n} · ${mission.m.place.toUpperCase()}` : 'MESSAGE FROM HQ';
+    stageBackdrop(); if (st.scene) { SET = magpieSet(st.scene); if (SET) mode = 'set'; } $('briefKicker').textContent = mission.stage === 0 ? `MISSION ${mission.m.n} · ${mission.m.place.toUpperCase()}` : 'MESSAGE FROM HQ';
     $('briefTitle').textContent = st.title; $('briefText').textContent = st.text; overlay('brief', true); speak(st.text);
     $('briefSpeak').onclick = () => speak(st.text);
-    $('briefGo').onclick = () => { SFX.click(); try { speechSynthesis.cancel(); } catch (e) {} overlay('brief', false); resolve(); };
+    $('briefGo').onclick = () => { SFX.click(); try { speechSynthesis.cancel(); } catch (e) {} overlay('brief', false); SET = null; if (mode === 'set') mode = 'hq'; resolve(); };
   });
 }
 async function decode(st) {
@@ -395,14 +403,33 @@ async function decode(st) {
 }
 let lastQ = '';
 const lastSentence = () => $('qSentence').textContent.replace(/\s*\([^)]*\)/, '');
+// a stage with its own little 3D set (the vault door, the Magpie caught): rendered instead of the HQ while it lasts
+let SET = null;
+function makeSet(fog = '#0b1024') {
+  const S = new THREE.Scene(); S.background = new THREE.Color(fog); S.fog = new THREE.Fog(fog, 8, 30);
+  S.add(new THREE.HemisphereLight('#cfe3ff', '#20142e', 1.3)); const k = new THREE.DirectionalLight('#ffffff', 1.6); k.position.set(3, 6, 5); S.add(k);
+  const fl = new THREE.Mesh(new THREE.CircleGeometry(12, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#141a30', metalness: .6, roughness: .3 })); S.add(fl);
+  return { S, cam: new THREE.PerspectiveCamera(50, camera.aspect, .05, 100), upd: [] };
+}
+function vaultSet() {
+  if (!A.vaultdoor) return null; const set = makeSet(mission.m.theme.fog), v = A.vaultdoor.scene.clone(true); dress(v); set.S.add(v);
+  const b = new THREE.Box3().setFromObject(v), h = b.max.y - b.min.y; set.door = v.getObjectByName('Door'); set.wheel = v.getObjectByName('Wheel');
+  set.cam.position.set(0, h * .5, h * 2.6); set.cam.lookAt(0, h * .12, 0); set.spin = 0; set.open = 0;   // (the door sits in the top half, over the question panel)
+  const pl = new THREE.PointLight('#bfe9ff', 40, 14, 1.4); pl.position.set(1.5, h * .9, h * .9); set.S.add(pl); const rim = glowSprite(mission.m.theme.trim, h * 2.2); rim.position.set(0, h * .47, -.4); rim.material.opacity = .25; set.S.add(rim);
+  set.upd.push((dt) => { if (set.wheel) set.wheel.rotation.z += (set.spin - set.wheel.rotation.z) * Math.min(1, dt * 4); if (set.door && set.open) set.door.rotation.y = lerp(set.door.rotation.y, -1.7, Math.min(1, dt * 1.6)); });
+  return set;
+}
 async function vault(st) {
-  stageBackdrop(); const code = Array.from({ length: st.n }, () => Math.floor(rand(0, 10))); let got = 0, angle = 0;
+  stageBackdrop(); SET = vaultSet(); if (SET) { mode = 'set'; $('quiz').classList.add('low'); }
+  const code = Array.from({ length: st.n }, () => Math.floor(rand(0, 10))); let got = 0, angle = 0;
   const vis = () => `<div class="dial" style="transform:rotate(${angle}deg)"><b>${got < st.n ? '?' : '✓'}</b></div><div class="code">${code.map((c, i) => `<span class="${i < got ? 'on' : ''}">${i < got ? c : '•'}</span>`).join('')}</div>`;
   while (got < st.n) {
     const ok = await ask({ kicker: 'VAULT · ' + st.title.toUpperCase(), title: got === 0 ? st.text : `Number ${got + 1} of ${st.n}`, visual: vis });
-    if (ok) { got++; angle += 360 + code[got - 1] * 36; SFX.door(); } else angle -= 40;
+    if (ok) { got++; angle += 360 + code[got - 1] * 36; SFX.door(); if (SET) { SET.spin += Math.PI * 1.5; toast(`${got} / ${st.n}  ·  ${code.slice(0, got).join(' ')}`, 'ok', 900); } } else angle -= 40;
   }
-  $('qVisual').innerHTML = vis(); flash('white'); toast('VAULT OPEN!', 'ok'); SFX.door(); await wait(900);
+  $('qVisual').innerHTML = vis(); toast('VAULT OPEN!', 'ok'); SFX.door();
+  if (SET) { SET.open = 1; await wait(1800); } else { flash('white'); await wait(900); }
+  $('quiz').classList.remove('low'); SET = null; mode = 'hq';
 }
 function finishMission() {
   const m = mission.m, s = mission.stats, secs = (performance.now() - mission.t0) / 1000, acc = s.asked ? s.right / s.asked : 1;
@@ -506,6 +533,7 @@ function playRoom(st) {
     for (const ln of laserRows.values()) {
       const c0 = Math.min(...ln.cs) - .5, c1 = Math.max(...ln.cs) + .5, z = oz + ln.r * CELL, x0 = ox + c0 * CELL, x1 = ox + c1 * CELL, beams = new THREE.Group();
       for (const y of [.35, .85, 1.35]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, x1 - x0, 6).rotateZ(Math.PI / 2), neon(ln.blink ? '#ffb02e' : '#ff2e4d')); b.position.set((x0 + x1) / 2, y, z); beams.add(b); const g = glowSprite(ln.blink ? '#ffb02e' : '#ff2e4d', .5); g.position.set(x0 + .1, y, z); beams.add(g); const g2 = g.clone(); g2.position.x = x1 - .1; beams.add(g2); }
+      if (A.emitter) for (const [x, ry] of [[x0, Math.PI / 2], [x1, -Math.PI / 2]]) { const e = A.emitter.scene.clone(true); dress(e); e.position.set(x, 0, z); e.rotation.y = ry; S.add(e); }
       S.add(beams); R.lines.push({ z, x0, x1, blink: ln.blink, on: true, beams, phase: rand(0, 2) });
     }
     R.lines.sort((a, b) => Math.abs(b.z - R.start.z) - Math.abs(a.z - R.start.z)).reverse();   // nearest to the start first
@@ -519,8 +547,19 @@ function playRoom(st) {
     if (st.type === 'lasers') toast('LASER HALL', 'info'); else if (st.type === 'escape') toast('RUN!', 'info'); else toast(st.title.toUpperCase(), 'info', 1100);
   });
 }
+// a rigged Blender character in a group: its clips by lower-case name, one playing at a time
+function rigged(src, h) {
+  const inner = cloneSkinned(src.scene); dress(inner); fitHeight(inner, h); const mixer = new THREE.AnimationMixer(inner), acts = {}; let cur = null;
+  for (const c of src.animations) acts[c.name.toLowerCase()] = mixer.clipAction(c);
+  return { inner, mixer, play(n, fade = .25, once = false) { const a = acts[n]; if (!a || a === cur) return; a.reset(); if (once) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; } a.fadeIn(fade).play(); if (cur) cur.fadeOut(fade); cur = a; } };
+}
 function makeGuard(p, axis, S) {
-  // a Bolt-Bot stand-in (the Blender one comes with the location kits): round white body, dark visor, cyan eyes, a torch
+  if (A.bot) { const g = new THREE.Group(), rg = rigged(A.bot, 1.6); g.add(rg.inner); rg.play('walk', 0);
+    const half = THREE.MathUtils.degToRad(30), len = 5;
+    const cone = new THREE.Mesh(new THREE.CircleGeometry(len, 20, -Math.PI / 2 - half, half * 2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: .22, depthWrite: false, toneMapped: false })); cone.position.y = .03;
+    g.position.copy(p); S.add(g); S.add(cone); const zz = textSprite('Zzz', '#9ff3ff', .35); zz.visible = false; zz.position.y = 2; g.add(zz); const sh = blobShadow(.4); g.add(sh);
+    return { g, cone, zz, dir: axis.clone(), sleep: 0, half, len, speed: 1.5, bob: rand(0, 6), rg }; }
+  // a Bolt-Bot stand-in: round white body, dark visor, cyan eyes, a torch
   const g = new THREE.Group(); const body = new THREE.Mesh(new THREE.CapsuleGeometry(.34, .5, 6, 16), new THREE.MeshStandardMaterial({ color: '#e9eef8', metalness: .3, roughness: .35 })); body.position.y = .62; g.add(body);
   const head = new THREE.Mesh(new THREE.SphereGeometry(.3, 20, 14), body.material); head.position.y = 1.25; g.add(head);
   const visor = new THREE.Mesh(new THREE.SphereGeometry(.26, 20, 12, -Math.PI / 2.6, Math.PI / 1.3, Math.PI / 3.2, Math.PI / 2.6), new THREE.MeshStandardMaterial({ color: '#101828', metalness: .6, roughness: .2 })); visor.position.y = 1.25; visor.position.z = .05; g.add(visor);
@@ -532,6 +571,10 @@ function makeGuard(p, axis, S) {
   return { g, cone, zz, dir: axis.clone(), sleep: 0, half, len, speed: 1.5, bob: rand(0, 6) };
 }
 function makeCam(p, S, th) {
+  if (A.secam) { const g = A.secam.scene.clone(true); dress(g); g.position.copy(p); S.add(g); const head = g.getObjectByName('Head') || g;
+    const half = THREE.MathUtils.degToRad(22), len = 6;
+    const cone = new THREE.Mesh(new THREE.CircleGeometry(len, 20, -Math.PI / 2 - half, half * 2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ff3a5a', transparent: true, opacity: .2, depthWrite: false, toneMapped: false })); cone.position.copy(p).setY(.04); S.add(cone);
+    return { g, cam: head, cone, p, half, len, a0: rand(0, Math.PI * 2), t: rand(0, 6), sweep: 1.1 }; }
   const g = new THREE.Group(); const pole = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, 2.6, 8), new THREE.MeshStandardMaterial({ color: '#202a44' })); pole.position.y = 1.3; g.add(pole);
   const cam = new THREE.Mesh(new THREE.BoxGeometry(.3, .25, .5), new THREE.MeshStandardMaterial({ color: '#dfe6f2', metalness: .4, roughness: .3 })); cam.position.y = 2.6; g.add(cam);
   const led = glowSprite('#ff2e4d', .35); led.position.set(0, 2.62, .3); cam.add(led); led.position.set(0, .02, .3);
@@ -591,11 +634,12 @@ function roomFrame(dt, t) {
   }
   // guards
   for (const G of R.guards) {
-    if (G.sleep > 0) { G.sleep -= dt; G.zz.visible = true; G.zz.position.y = 2 + Math.sin(t * 3) * .1; G.cone.visible = false; G.g.rotation.z = .25; if (G.sleep <= 0) { G.zz.visible = false; G.g.rotation.z = 0; G.cone.visible = true; } continue; }
+    if (G.rg) G.rg.mixer.update(dt);
+    if (G.sleep > 0) { G.sleep -= dt; G.zz.visible = true; G.zz.position.y = 2 + Math.sin(t * 3) * .1; G.cone.visible = false; if (G.rg) G.rg.play('sleep'); else G.g.rotation.z = .25; if (G.sleep <= 0) { G.zz.visible = false; G.g.rotation.z = 0; G.cone.visible = true; if (G.rg) G.rg.play('walk'); } continue; }
     const nx = G.g.position.x + G.dir.x * G.speed * dt, nz = G.g.position.z + G.dir.z * G.speed * dt;
     if (solid(R, nx + G.dir.x * .5, nz + G.dir.z * .5, .3)) G.dir.multiplyScalar(-1); else G.g.position.set(nx, 0, nz);
     const ang = Math.atan2(G.dir.x, G.dir.z); G.g.rotation.y += Math.atan2(Math.sin(ang - G.g.rotation.y), Math.cos(ang - G.g.rotation.y)) * Math.min(1, dt * 6);
-    G.g.position.y = Math.abs(Math.sin(t * 6 + G.bob)) * .05; G.cone.position.set(G.g.position.x, .03, G.g.position.z); G.cone.rotation.y = G.g.rotation.y;
+    G.g.position.y = G.rg ? 0 : Math.abs(Math.sin(t * 6 + G.bob)) * .05; G.cone.position.set(G.g.position.x, .03, G.g.position.z); G.cone.rotation.y = G.g.rotation.y;
     const eye = G.g.position.clone().setY(0); if (sees(R, eye, G.g.rotation.y, G.half, G.len, R.pos)) { spotted('SPOTTED!'); return; }
   }
   for (const C of R.cams) { C.t += dt; const a = C.a0 + Math.sin(C.t * .6) * C.sweep; C.cam.rotation.y = a; C.cone.rotation.y = a; if (sees(R, C.p, a, C.half, C.len, R.pos)) { spotted('CAMERA!'); return; } }
@@ -671,6 +715,7 @@ function frame(now) {
   requestAnimationFrame(frame);   // (first, so one bad frame can never stop the game)
   const R = room;
   if (mode === 'room' && R) { roomFrame(dt, t); renderer.render(R.S, camera); save.time += dt; }
+  else if (mode === 'set' && SET) { SET.cam.aspect = camera.aspect; SET.cam.updateProjectionMatrix(); for (const f of SET.upd) f(dt, t); renderer.render(SET.S, SET.cam); }
   else if (HQ.scene && HQ.fox) { hqFrame(dt, t); renderer.render(HQ.scene, camera); }
 }
 (async () => {
