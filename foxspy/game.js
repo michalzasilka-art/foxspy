@@ -696,6 +696,7 @@ function playRoom(st) {
       const c0 = Math.min(...ln.cs) - .5, c1 = Math.max(...ln.cs) + .5, z = oz + ln.r * CELL, x0 = ox + c0 * CELL, x1 = ox + c1 * CELL, beams = new THREE.Group();
       for (const y of [.35, .85, 1.35]) { const b = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, x1 - x0, 6).rotateZ(Math.PI / 2), neon(ln.blink ? '#ffb02e' : '#ff2e4d')); b.position.set((x0 + x1) / 2, y, z); beams.add(b); const g = glowSprite(ln.blink ? '#ffb02e' : '#ff2e4d', .5); g.position.set(x0 + .1, y, z); beams.add(g); const g2 = g.clone(); g2.position.x = x1 - .1; beams.add(g2); }
       if (A.emitter) for (const [x, ry] of [[x0, Math.PI / 2], [x1, -Math.PI / 2]]) { const e = A.emitter.scene.clone(true); dress(e); e.position.set(x, 0, z); e.rotation.y = ry; S.add(e); }
+      { const fl = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, .7).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: GLOW, color: ln.blink ? '#ffb02e' : '#ff2e4d', transparent: true, opacity: .45, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); fl.position.set((x0 + x1) / 2, .02, z); beams.add(fl); }
       S.add(beams); R.lines.push({ z, x0, x1, blink: ln.blink, on: true, beams, phase: rand(0, 2) });
     }
     R.lines.sort((a, b) => Math.abs(b.z - R.start.z) - Math.abs(a.z - R.start.z)).reverse();   // nearest to the start first
@@ -768,7 +769,7 @@ function sightClear(R, a, b) { const d = a.distanceTo(b), n = Math.ceil(d / .3);
 const sees = (R, from, ang, half, len, to) => { const dx = to.x - from.x, dz = to.z - from.z, d = Math.hypot(dx, dz); if (d > len) return false; let da = Math.atan2(dx, dz) - ang; da = Math.atan2(Math.sin(da), Math.cos(da)); return Math.abs(da) < half && sightClear(R, from, to); };
 
 function roomFrame(dt, t) {
-  const R = room; if (!R) return; R.t += dt;
+  const R = room; if (!R) return; R.t += dt; if (R.done) { R.fox.update(dt, false, 0); return; }
   const paused = anyOverlay() || R.busy;
   // move
   let ix = 0, iz = 0;
@@ -777,9 +778,11 @@ function roomFrame(dt, t) {
   if (mag > .1) { const nx = ix / Math.hypot(ix, iz), nz = iz / Math.hypot(ix, iz), step = speed * dt;
     if (!solid(R, R.pos.x + nx * step, R.pos.z)) R.pos.x += nx * step; if (!solid(R, R.pos.x, R.pos.z + nz * step)) R.pos.z += nz * step;
     const want = Math.atan2(nx, nz); let da = want - R.face; da = Math.atan2(Math.sin(da), Math.cos(da)); R.face += da * Math.min(1, dt * 12); }
-  R.fox.root.position.copy(R.pos); R.fox.root.rotation.y = R.face; R.shadow.position.set(R.pos.x, .02, R.pos.z); R.fox.update(dt, mag > .1, speed);
+  R.fox.root.position.copy(R.pos); R.fox.root.rotation.y = R.face; R.shadow.position.set(R.pos.x, .02, R.pos.z);
+  const danger = R.guards.some((G) => G.sleep <= 0 && G.g.position.distanceTo(R.pos) < 5.5) || R.cams.some((C) => C.p.distanceTo(R.pos) < 6);
+  if (R.fox.hasClips && mag > .1) { R.fox.manual = true; R.fox.play(danger ? 'sneak' : 'run'); R.fox.update(dt, true, speed); } else { R.fox.manual = false; R.fox.update(dt, mag > .1, speed); }
   // camera follows
-  const P = camera.aspect < .9, want = R.pos.clone().add(new THREE.Vector3(0, P ? 12.5 : 9.5, P ? 3.6 : 4.2)); R.camPos.lerp(want, Math.min(1, dt * (R.t < 1.4 ? 2.2 : 4))); camera.position.copy(R.camPos); camera.lookAt(R.pos.x, .3, R.pos.z + (P ? 1.2 : -.5));   // (tall screens: Foxino a little above the middle, the controls cover the bottom)
+  const P = camera.aspect < .9, narrow = R.W <= 7, want = R.pos.clone().add(new THREE.Vector3(0, P ? (narrow ? 10 : 12.5) : 9.5, P ? (narrow ? 1.2 : 3.6) : 4.2)); R.camPos.lerp(want, Math.min(1, dt * (R.t < 1.4 ? 2.2 : 4))); camera.position.copy(R.camPos); camera.lookAt(R.pos.x, .3, R.pos.z + (P ? (narrow ? -1.6 : 1.2) : -.5));   // (tall screens: Foxino a little above the middle, the controls cover the bottom)
   if (R.foxLight) R.foxLight.position.set(R.pos.x, 2.4, R.pos.z + .6); if (R.motes) R.motes.material.uniforms.uTime.value = t; if (R.exitBeam) R.exitBeam.material.uniforms.uTime.value = t;
   if (R.camLock) { camera.position.copy(R.camLock.p); camera.lookAt(R.camLock.l); }   // (test hook: a fixed close-up)
   // exit
@@ -856,7 +859,13 @@ function spotted(why) {
   for (const G of R.guards) G.sleep = 0;
 }
 function failRoom(why) { toast(why, 'bad', 1500); SFX.alarm(); const R = room; room = null; mode = 'hq'; setTimeout(() => R.resolve(false), 1200); }
-function roomDone() { const R = room; SFX.pick(); toast('CLEAR!', 'ok', 900); mode = 'hq'; room = null; setTimeout(() => R.resolve(true), 700); }
+function roomDone() {
+  const R = room; SFX.pick(); toast('CLEAR!', 'ok', 900); R.done = true;
+  if (R.fox.hasClips) { R.fox.manual = true; R.fox.play('celebrate', .15); }
+  const burst = glowSprite(mission.m.theme.trim, 1); burst.position.copy(R.pos).setY(1); R.S.add(burst); const t0 = performance.now();
+  const anim = () => { const k = (performance.now() - t0) / 650; burst.scale.setScalar(1 + k * 7); burst.material.opacity = Math.max(0, 1 - k); if (k < 1) requestAnimationFrame(anim); }; anim();
+  setTimeout(() => { mode = 'hq'; room = null; R.resolve(true); }, 900);
+}
 function disposeRoom() { if (room) room = null; $('prompt').classList.remove('show'); }
 function pauseRoom() { if (mode !== 'room') return; overlay('pause', true); }
 $('pResume').onclick = () => overlay('pause', false);
