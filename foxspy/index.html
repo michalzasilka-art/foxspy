@@ -8,7 +8,7 @@
 <link rel="icon" href="/favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Exo+2:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -30,25 +30,33 @@
     <div class="agent"><b id="hqRank">Rookie</b><i id="hqStars">0 ★</i></div>
     <button class="icon-btn" id="btnSettings" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7zm7.4-2.5l2 1.6-2 3.4-2.4-1a7.6 7.6 0 0 1-2 1.2L14.6 21h-4l-.4-2.8a7.6 7.6 0 0 1-2-1.2l-2.4 1-2-3.4 2-1.6a7.8 7.8 0 0 1 0-2.4L3.8 9 5.8 5.6l2.4 1a7.6 7.6 0 0 1 2-1.2L10.6 3h4l.4 2.4a7.6 7.6 0 0 1 2 1.2l2.4-1 2 3.4-2 1.6a7.8 7.8 0 0 1 0 2.4z"/></svg></button>
   </div>
-  <button class="side-arrow left" id="goTrophy"><svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8"/></svg><span>TROPHY<br>ROOM</span></button>
-  <button class="side-arrow right" id="goStats"><span>AGENT<br>STATS</span><svg viewBox="0 0 24 24"><path d="M9 4l8 8-8 8"/></svg></button>
   <div class="hq-bottom">
-    <div class="hq-hint" id="hqHint">Agent Foxino is waiting for his next mission</div>
-    <button class="holo-btn big" id="btnSelect"><span>SELECT MISSION</span></button>
+    <div class="hq-hint" id="hqHint">Agent Foxino is waiting for his first mission</div>
+    <div class="dock">
+      <button class="dock-side" id="goTrophy"><svg viewBox="0 0 24 24"><path d="M7 4h10v4a5 5 0 0 1-10 0zM5 5H3v2a3 3 0 0 0 3 3M19 5h2v2a3 3 0 0 1-3 3M10 14h4l1 4H9zM8 20h8"/></svg><span>TROPHIES</span></button>
+      <button class="holo-btn big" id="btnSelect"><span>SELECT MISSION</span></button>
+      <button class="dock-side" id="goStats"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>STATS</span></button>
+    </div>
   </div>
 </div>
 
-<!-- side views -->
+<!-- side views: the Trophy Room and the Agent Stats -->
 <div id="side" class="screen">
-  <div class="topbar"><div class="side-title" id="sideTitle">TROPHY ROOM</div></div>
+  <div class="topbar"><button class="holo-btn small" id="sideBack">← HQ</button><div class="side-title" id="sideTitle">TROPHY ROOM</div></div>
   <div id="labels"></div>
-  <button class="side-arrow back" id="sideBack"><svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8"/></svg><span>HQ</span></button>
+  <div id="statsPanel"></div>
+  <div id="trophyNav">
+    <button class="tn-arrow" id="tPrev" aria-label="Previous case"><svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8"/></svg></button>
+    <div class="tcard" id="tCard"></div>
+    <button class="tn-arrow" id="tNext" aria-label="Next case"><svg viewBox="0 0 24 24"><path d="M9 4l8 8-8 8"/></svg></button>
+  </div>
 </div>
 
 <!-- globe: mission select -->
 <div id="globe" class="screen">
   <div class="topbar"><button class="holo-btn small" id="globeBack">← HQ</button><div class="side-title">SELECT A MISSION</div></div>
   <div class="mission-list" id="missionList"></div>
+  <div class="globe-hint" id="globeHint"><svg viewBox="0 0 24 24"><path d="M9 11V6a1.5 1.5 0 0 1 3 0v4m0-1a1.5 1.5 0 0 1 3 0v2m0-1a1.5 1.5 0 0 1 3 0v4a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-3l-2-4a1.5 1.5 0 0 1 2.5-1.5L9 13"/></svg>Drag to spin the world · tap a glowing pin</div>
   <div class="card hidden-card" id="card">
     <div class="card-head"><i id="cardN">MISSION 1</i><b id="cardName">Operation Moonlight</b><span id="cardPlace">Paris, France</span></div>
     <p id="cardStory"></p>
@@ -136,6 +144,6 @@
 
 <script src="packages.js?v=1"></script>
 <script src="/shared/pack-picker.js?v=8"></script>
-<script type="module" src="game.js?v=6"></script>
+<script type="module" src="game.js?v=8"></script>
 </body>
 </html>

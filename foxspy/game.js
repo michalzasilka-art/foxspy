@@ -6,6 +6,10 @@
 import * as THREE from './lib/three.module.min.js';
 import { GLTFLoader } from './lib/GLTFLoader.js';
 import { MISSIONS, RANKS } from './missions.js?v=4';
+import { EffectComposer } from './lib/pp/EffectComposer.js';
+import { RenderPass } from './lib/pp/RenderPass.js';
+import { UnrealBloomPass } from './lib/pp/UnrealBloomPass.js';
+import { OutputPass } from './lib/pp/OutputPass.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -53,10 +57,18 @@ const canvas = $('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: save.gfx !== 'low', powerPreference: 'high-performance' });
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15; renderer.outputColorSpace = THREE.SRGBColorSpace;
 const camera = new THREE.PerspectiveCamera(50, 1, .05, 400);
+// bloom: the neon, the holograms and the lasers glow (HIGH graphics; LOW renders straight, for slow phones)
+const BLOOM = save.gfx !== 'low';
+let composer = null, renderPass = null, bloomPass = null;
+if (BLOOM) { composer = new EffectComposer(renderer); renderPass = new RenderPass(new THREE.Scene(), camera); composer.addPass(renderPass);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), .35, .35, 1.0); composer.addPass(bloomPass); composer.addPass(new OutputPass()); }
+function draw(scene, cam, bloom = .8) { if (!composer) { renderer.render(scene, cam); return; } renderPass.scene = scene; renderPass.camera = cam; bloomPass.strength = bloom; composer.render(); }
 function resize() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, save.gfx === 'low' ? 1.25 : 2));
   renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight;
-  camera.fov = camera.aspect < .8 ? 64 : 50; camera.updateProjectionMatrix();
+  camera.fov = camera.aspect < .9 ? 62 : 50; camera.updateProjectionMatrix();
+  if (composer) { composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(innerWidth, innerHeight); }
+  if (window.__hqReady) onHQResize();
 }
 addEventListener('resize', resize); resize();
 
@@ -78,7 +90,7 @@ function dress(root) {
   root.traverse((o) => {
     if (!o.isMesh) return; o.frustumCulled = !o.isSkinnedMesh;
     // "Glow" parts: full-bright in their own (vertex) colours, untouched by the lights; skinned meshes keep skinning
-    const glowOf = (m) => { const g = new THREE.MeshBasicMaterial({ color: m.color ? m.color.clone().multiplyScalar(1.25) : 0xffffff, vertexColors: !!m.vertexColors, toneMapped: false, map: m.map || null }); g.name = m.name; return g; };
+    const glowOf = (m) => { const g = new THREE.MeshBasicMaterial({ color: m.color ? m.color.clone().multiplyScalar(BLOOM ? 1.4 : 1.25) : 0xffffff, vertexColors: !!m.vertexColors, toneMapped: false, map: m.map || null }); g.name = m.name; return g; };
     if (Array.isArray(o.material)) o.material = o.material.map((m) => (m && /glow/i.test(m.name) ? glowOf(m) : m));
     else if (o.material && /glow/i.test(o.material.name)) o.material = glowOf(o.material);
     for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.isMeshStandardMaterial) m.envMapIntensity = .6;
@@ -120,7 +132,7 @@ function glowTex(c1 = '255,255,255') { const cv = document.createElement('canvas
 const GLOW = glowTex();
 const glowSprite = (color, size) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); s.scale.setScalar(size); return s; };
 const blobShadow = (r = .5) => { const m = new THREE.Mesh(new THREE.CircleGeometry(r, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: .35, depthWrite: false })); m.position.y = .02; return m; };
-const neon = (c) => new THREE.MeshBasicMaterial({ color: c, toneMapped: false });
+const neon = (c) => new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(BLOOM ? 1.25 : 1), toneMapped: false });   // (over 1: the bloom picks it up)
 function textSprite(text, color = '#5ff3ff', h = .22) {
   const cv = document.createElement('canvas'), g = cv.getContext('2d'); g.font = '700 64px Orbitron, Arial'; const w = Math.ceil(g.measureText(text).width) + 40; cv.width = w; cv.height = 96;
   g.font = '700 64px Orbitron, Arial'; g.textBaseline = 'middle'; g.shadowColor = color; g.shadowBlur = 18; g.fillStyle = color; g.fillText(text, 20, 50);
@@ -182,107 +194,191 @@ function ask({ kicker, title, visual }) {
 async function askUntilRight(opts, onWrong) { for (;;) { const ok = await ask(opts); if (ok) return; if (onWrong) onWrong(); } }
 
 /* ================= HQ ================= */
-const HQ = { scene: new THREE.Scene(), view: 'center', views: {}, pins: [], pillars: [], cases: [], arts: [], tw: null, globe: null, selected: null };
-HQ.scene.background = new THREE.Color('#050916'); HQ.scene.fog = new THREE.Fog('#050916', 14, 40);
+// Foxino's headquarters: the menu. Views: 'center' (Foxino and the hologram), 'left' (the Trophy Room gallery), 'right'
+// (the Agent Stats board) and 'globe' (the interactive hologram: drag to spin it, tap a pin to fly to that mission).
+// Every view is framed for the screen's own shape, so a phone held upright (9:16) gets its own camera positions.
+const HQ = { scene: new THREE.Scene(), view: 'center', views: {}, pins: [], pillars: [], cases: [], arts: [], tw: null, globe: null, selected: null, mats: [], upd: [] };
+HQ.scene.background = new THREE.Color('#040814'); HQ.scene.fog = new THREE.Fog('#040814', 16, 42);
+const PORTRAIT = () => camera.aspect < .9;
 function buildHQ() {
   const S = HQ.scene;
-  S.add(new THREE.HemisphereLight('#7fb6ff', '#140a2a', .9));
-  const key = new THREE.PointLight('#7af0ff', 30, 16, 1.6); key.position.set(0, 3.6, -2); S.add(key);
-  const vio = new THREE.PointLight('#b57bff', 26, 18, 1.6); vio.position.set(-5, 3, 1); S.add(vio);
-  const warm = new THREE.PointLight('#ffd9a8', 22, 14, 1.6); warm.position.set(2, 3, 3); S.add(warm);
-  const pnk = new THREE.PointLight('#ff6ec7', 18, 14, 1.6); pnk.position.set(5, 3, -1); S.add(pnk);
+  S.add(new THREE.HemisphereLight('#7fb6ff', '#140a2a', .75));
+  const key = new THREE.PointLight('#7af0ff', 34, 14, 1.6); key.position.set(0, 3.4, -2); S.add(key);
+  const vio = new THREE.PointLight('#b57bff', 30, 18, 1.6); vio.position.set(-5, 3, 1); S.add(vio);
+  const warm = new THREE.PointLight('#ffd9a8', 20, 14, 1.6); warm.position.set(2, 3, 4); S.add(warm);
+  const pnk = new THREE.PointLight('#ff6ec7', 22, 14, 1.6); pnk.position.set(5, 3, -1); S.add(pnk);
   let screen = null;
   if (A.room) {
     const room = dress(A.room.scene); S.add(room);
     room.traverse((o) => { const m = o.name.match(/^Pillar_(\d)/); if (m) HQ.pillars[+m[1] - 1] = o; if (o.name === 'Screen') screen = o; if (o.name === 'ProjectorTable') HQ.table = o;
-      if (o.name === 'Floor' && o.isMesh) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach((m) => { if (!/glow/i.test(m.name)) { m.metalness = .55; m.roughness = .22; } }); } });
+      if (o.name === 'Floor' && o.isMesh) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach((m) => { if (m.isMeshStandardMaterial) { m.metalness = .6; m.roughness = .18; } }); } });
     room.updateMatrixWorld(true);
   }
   if (HQ.pillars.length < 5 || !screen) {
-    // stand-in room until the Blender HQ arrives
+    // stand-in room (only if the Blender HQ is missing)
     const floor = new THREE.Mesh(new THREE.CircleGeometry(11, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#0d1530', metalness: .7, roughness: .25 })); S.add(floor);
-    for (let r = 2; r <= 10; r += 2) { const ring = new THREE.Mesh(new THREE.RingGeometry(r - .015, r + .015, 96).rotateX(-Math.PI / 2), neon(r % 4 ? '#1b4a7a' : '#2a6aa8')); ring.position.y = .01; S.add(ring); }
-    const wallT = (() => { const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 256; const g = cv.getContext('2d'); g.fillStyle = '#0a1228'; g.fillRect(0, 0, 1024, 256);
-      for (let x = 0; x < 1024; x += 64) { g.fillStyle = x % 128 ? '#0e1a38' : '#101f44'; g.fillRect(x + 2, 20, 60, 200); g.fillStyle = '#5ff3ff'; g.globalAlpha = .7; g.fillRect(x + 2, 226, 60, 3); g.fillStyle = '#b57bff'; g.fillRect(x + 2, 16, 60, 2); g.globalAlpha = 1; }
-      const t = new THREE.CanvasTexture(cv); t.wrapS = THREE.RepeatWrapping; t.repeat.x = 3; t.colorSpace = THREE.SRGBColorSpace; return t; })();
-    const wall = new THREE.Mesh(new THREE.CylinderGeometry(10, 10, 6, 64, 1, true), new THREE.MeshStandardMaterial({ map: wallT, emissive: '#ffffff', emissiveMap: wallT, emissiveIntensity: .35, side: THREE.BackSide, roughness: .6 })); wall.position.y = 3; S.add(wall);
-    const ceil = new THREE.Mesh(new THREE.TorusGeometry(3.2, .05, 8, 96).rotateX(Math.PI / 2), neon('#5ff3ff')); ceil.position.y = 4.6; S.add(ceil);
-    const table = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.25, 1, 48), new THREE.MeshStandardMaterial({ color: '#16213f', metalness: .8, roughness: .3 })); table.position.set(0, .5, -2); S.add(table);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.08, .03, 8, 64).rotateX(Math.PI / 2), neon('#5ff3ff')); rim.position.set(0, 1.0, -2); S.add(rim);
-    for (let k = 0; k < 5; k++) { const z = 3.2 - k * 1.6, p = new THREE.Group(); p.name = 'Pillar_' + (k + 1);
-      const col = new THREE.Mesh(new THREE.BoxGeometry(.6, 1.1, .6), new THREE.MeshStandardMaterial({ color: '#141d38', metalness: .7, roughness: .35 })); col.position.y = -.55; p.add(col);
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(.62, .03, .62), neon('#5ff3ff')); edge.position.y = -.02; p.add(edge);
-      p.position.set(-7, 1.1, z); S.add(p); HQ.pillars[k] = p; }
-    if (!screen) { screen = new THREE.Mesh(new THREE.PlaneGeometry(6, 3), new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false })); screen.position.set(7.3, 2.1, 0); screen.rotation.y = -Math.PI / 2; S.add(screen);
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(.12, 3.2, 6.2), new THREE.MeshStandardMaterial({ color: '#1a2444', metalness: .8, roughness: .3 })); frame.position.set(7.38, 2.1, 0); S.add(frame); }
+    const table = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.25, 1, 48), new THREE.MeshStandardMaterial({ color: '#16213f', metalness: .8, roughness: .3 })); table.position.set(0, .5, -2); S.add(table); HQ.table = table;
+    for (let k = 0; k < 5; k++) { const p = new THREE.Group(); const col = new THREE.Mesh(new THREE.BoxGeometry(.6, 1.1, .6), new THREE.MeshStandardMaterial({ color: '#141d38', metalness: .7, roughness: .35 })); col.position.y = -.55; p.add(col); p.position.set(-7, 1.1, 3.2 - k * 1.6); S.add(p); HQ.pillars[k] = p; }
+    if (!screen) { screen = new THREE.Mesh(new THREE.PlaneGeometry(6, 3), new THREE.MeshBasicMaterial()); screen.position.set(7.3, 2.1, 0); screen.rotation.y = -Math.PI / 2; S.add(screen); }
   }
   // the smart board: a canvas on the Screen mesh
   HQ.boardCv = document.createElement('canvas'); HQ.boardCv.width = 2048; HQ.boardCv.height = 1024; HQ.boardTex = new THREE.CanvasTexture(HQ.boardCv); HQ.boardTex.colorSpace = THREE.SRGBColorSpace; if (A.room) HQ.boardTex.flipY = false;   /* (the Blender Screen's UVs run the other way) */
   screen.material = new THREE.MeshBasicMaterial({ map: HQ.boardTex, toneMapped: false }); HQ.screen = screen; drawBoard();
-  // glass cases and the artifacts won so far
+  // glass cases, a spotlight cone over each, and the artifacts won so far
   HQ.pillars.forEach((p, k) => {
     p.updateMatrixWorld(true); const top = new THREE.Vector3(); p.getWorldPosition(top);
-    let gc; if (A.case) gc = dress(A.case.scene.clone(true)); else { gc = new THREE.Group(); const g = new THREE.Mesh(new THREE.BoxGeometry(.5, .6, .5), null); g.name = 'Glass'; g.position.y = .3; gc.add(g); dress(gc); const cap = new THREE.Mesh(new THREE.BoxGeometry(.54, .04, .54), new THREE.MeshStandardMaterial({ color: '#c8d4ea', metalness: .9, roughness: .2 })); cap.position.y = .62; gc.add(cap); }
-    gc.position.copy(top); HQ.scene.add(gc); HQ.cases[k] = { top, gc };
-    const spot = glowSprite('#5ff3ff', .9); spot.position.copy(top).add(new THREE.Vector3(0, .3, 0)); spot.material.opacity = .25; S.add(spot);
+    const gc = A.case ? dress(A.case.scene.clone(true)) : new THREE.Group(); gc.position.copy(top); S.add(gc);
+    const cone = new THREE.Mesh(new THREE.CylinderGeometry(.08, .42, 2.6, 24, 1, true), holoMat('#9ff3ff', .1)); HQ.mats.push(cone.material); cone.position.copy(top).add(new THREE.Vector3(0, 1.3, 0)); S.add(cone);
+    const halo = glowSprite('#5ff3ff', 1.1); halo.position.copy(top).add(new THREE.Vector3(0, .2, 0)); halo.material.opacity = .3; S.add(halo);
+    HQ.cases[k] = { top, gc, cone, halo };
   });
   refreshTrophies();
   // where things are: the projector table (the globe floats above it), the board, the trophy gallery
-  const tb = HQ.table ? new THREE.Box3().setFromObject(HQ.table) : null;
-  HQ.gc = tb ? new THREE.Vector3((tb.min.x + tb.max.x) / 2, tb.max.y + .9, (tb.min.z + tb.max.z) / 2) : new THREE.Vector3(0, 1.88, -2);
-  const sb = new THREE.Box3().setFromObject(screen), sc = sb.getCenter(new THREE.Vector3());
-  const pc = HQ.pillars.reduce((a, p) => a.add(p.getWorldPosition(new THREE.Vector3())), new THREE.Vector3()).multiplyScalar(1 / HQ.pillars.length);
+  const tb = new THREE.Box3().setFromObject(HQ.table);
+  HQ.gc = new THREE.Vector3((tb.min.x + tb.max.x) / 2, tb.max.y + .92, (tb.min.z + tb.max.z) / 2);
+  HQ.tableTop = tb.max.y;
+  const sb = new THREE.Box3().setFromObject(screen); HQ.sc = sb.getCenter(new THREE.Vector3()); HQ.sw = Math.max(sb.max.z - sb.min.z, sb.max.x - sb.min.x);
+  HQ.pc = HQ.pillars.reduce((a, p) => a.add(p.getWorldPosition(new THREE.Vector3())), new THREE.Vector3()).multiplyScalar(1 / HQ.pillars.length);
+  HQ.pspan = Math.max(...HQ.pillars.map((p) => p.getWorldPosition(new THREE.Vector3()).distanceTo(HQ.pc))) * 2 + 1;
   // Foxino looking at the globe (the Blender spy plays LookAtGlobe: hand on chin, looking up to his left)
   const fp = HQ.FOX_AT = new THREE.Vector3(HQ.gc.x - 1.75, 0, HQ.gc.z + .55);
-  HQ.fox = makeFoxino(false); HQ.fox.root.position.copy(fp); HQ.fox.root.rotation.y = HQ.fox.hasClips ? .15 : .75; S.add(HQ.fox.root); { const sh = blobShadow(.45); sh.position.set(fp.x, .02, fp.z); S.add(sh); }
+  HQ.fox = makeFoxino(false); S.add(HQ.fox.root); HQ.foxShadow = blobShadow(.45); S.add(HQ.foxShadow); placeHQFox();
   if (HQ.fox.hasClips) { HQ.fox.manual = true; HQ.fox.play('lookatglobe', 0); }
-  buildGlobe();
-  const gw = HQ.gc;
-  HQ.views = {
-    center: { p: new THREE.Vector3(gw.x + .2, 1.75, gw.z + 7.2), l: new THREE.Vector3(gw.x - .45, 1.4, gw.z) },
-    left: { p: new THREE.Vector3(pc.x + 5.6, 1.75, pc.z + .2), l: new THREE.Vector3(pc.x, 1.15, pc.z) },
-    right: { p: new THREE.Vector3(sc.x - 4.3, sc.y - .05, sc.z), l: sc.clone() },
-    globe: { p: new THREE.Vector3(gw.x + .1, gw.y + .12, gw.z + 2.35), l: new THREE.Vector3(gw.x, gw.y - .02, gw.z) },
-  };
-  const v = HQ.views.center; camera.position.copy(v.p); HQ.look = v.l.clone(); camera.lookAt(HQ.look);
+  const rim = new THREE.SpotLight('#9ff3ff', 26, 7, .45, .6, 1.4); rim.position.set(HQ.gc.x, 3.4, HQ.gc.z - .4); rim.target = HQ.fox.root; S.add(rim); HQ.rim = rim;
+  buildGlobe(); buildMotes(); computeViews();
+  // the opening shot: from high above the hologram down to Foxino
+  const v = HQ.views.center; HQ.look = v.l.clone(); camera.position.copy(v.p).add(new THREE.Vector3(0, 3.2, 3.5)); camera.lookAt(HQ.look);
+  HQ.tw = { to: 'center', p0: camera.position.clone(), l0: v.l.clone().add(new THREE.Vector3(0, 1.2, 0)), p1: v.p.clone(), l1: v.l.clone(), t: 0, d: 2.6 };
+}
+// the cameras for each view, fitted to the screen: what must be on screen is given as a width (and a height) at a distance
+function fitDist(w, h) { const vt = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), ht = vt * camera.aspect; return Math.max(w / 2 / ht, h / 2 / vt); }
+// where Foxino stands: beside the table on a wide screen; on a tall one in front of it, back three-quarters to us, looking up at
+// the hologram above him (the shot stacks up the screen: Foxino and his tail at the bottom, the globe over his head)
+function placeHQFox() {
+  const g = HQ.gc, P = PORTRAIT(), f = HQ.FOX_AT = P ? new THREE.Vector3(g.x - .62, 0, g.z + 1.55) : new THREE.Vector3(g.x - 1.75, 0, g.z + .55);
+  HQ.fox.root.position.copy(f); HQ.fox.root.rotation.y = P ? Math.PI + .95 : (HQ.fox.hasClips ? .15 : .75); HQ.foxShadow.position.set(f.x, .02, f.z);
+}
+function computeViews() {
+  if (HQ.fox) placeHQFox();
+  const g = HQ.gc, P = PORTRAIT(), f = HQ.FOX_AT;
+  // centre: Foxino and the hologram together (on a tall screen the camera comes round so they stack up the screen)
+  const cx = (f.x + g.x) / 2 - .15, dC = fitDist(6.2, 3.5);
+  const center = P ? { p: new THREE.Vector3(g.x + .35, 1.05, g.z + 5.1), l: new THREE.Vector3(g.x - .12, 1.62, g.z) }
+    : { p: new THREE.Vector3(cx + .3, 1.7, g.z + dC), l: new THREE.Vector3(cx, 1.35, g.z - .1) };
+  // the globe close-up: the globe in the top half (tall screens: above the mission card) or on the left (wide screens: card on the right)
+  const dG = P ? fitDist(1.75, 1.75) * 1.62 : fitDist(4.2, 2.9);
+  const globe = P ? { p: new THREE.Vector3(g.x, g.y + .32, g.z + dG), l: new THREE.Vector3(g.x, g.y - .42, g.z) }
+    : { p: new THREE.Vector3(g.x + .35, g.y + .15, g.z + dG), l: new THREE.Vector3(g.x + .78, g.y - .05, g.z) };
+  // trophy gallery: all five cases; stats board: the whole board (wide screens) or its middle (the panel shows the numbers)
+  const pc = HQ.pc, dir = new THREE.Vector3(HQ.gc.x - pc.x, 0, HQ.gc.z - pc.z).normalize(), dL = fitDist(HQ.pspan * (P ? .92 : 1.02), 2.2);
+  const left = { p: pc.clone().addScaledVector(dir, dL).setY(P ? 2.4 : 1.75), l: pc.clone().setY(P ? 1.0 : 1.15) };
+  // the board's facing: its face normal in the world (the mesh's own axes may point anywhere), turned toward the room
+  const sc = HQ.sc, na = HQ.screen.geometry.attributes.normal, n = na ? new THREE.Vector3().fromBufferAttribute(na, 0).transformDirection(HQ.screen.matrixWorld) : new THREE.Vector3(-1, 0, 0);
+  n.y = 0; n.normalize(); if (n.dot(new THREE.Vector3(g.x - sc.x, 0, g.z - sc.z)) < 0) n.negate();
+  const dR = fitDist(P ? HQ.sw * .55 : HQ.sw * 1.08, 3.4);
+  const right = { p: sc.clone().addScaledVector(n, dR).setY(sc.y - (P ? .2 : .05)), l: sc.clone().setY(sc.y - (P ? .25 : 0)) };
+  HQ.views = { center, globe, left, right };
+  // one glass case at a time (the Trophy Room walk): in front of the case, a little above it
+  HQ.caseViews = HQ.cases.map((c) => { const away = new THREE.Vector3(HQ.gc.x - c.top.x, 0, HQ.gc.z - c.top.z).normalize(), side = new THREE.Vector3(-away.z, 0, away.x);
+    const d = P ? 1.85 : 1.6; return { p: c.top.clone().addScaledVector(away, d).addScaledVector(side, .12).setY(c.top.y + (P ? .62 : .45)), l: c.top.clone().setY(c.top.y + (P ? .05 : .18)) }; });
+  if (HQ.view === 'left' && HQ.tIdx >= 0) HQ.views.left = HQ.caseViews[HQ.tIdx];
+}
+function onHQResize() {
+  if (!HQ.views.center) return; computeViews(); const v = HQ.views[HQ.view] || HQ.views.center;
+  if (!HQ.tw) { camera.position.copy(v.p); HQ.look.copy(v.l); }
+  document.body.classList.toggle('portrait', PORTRAIT());
 }
 function refreshTrophies() {
   HQ.arts.forEach((a) => a && a.parent && a.parent.remove(a)); HQ.arts = [];
-  MISSIONS.forEach((m, k) => { const c = HQ.cases[k]; if (!c || !save.done[m.id]) return;
-    const a = artifactModel(m); a.position.copy(c.top).add(new THREE.Vector3(0, A.case ? .08 : .12, 0)); HQ.scene.add(a); HQ.arts[k] = a; });
+  MISSIONS.forEach((m, k) => { const c = HQ.cases[k]; if (!c) return; const won = !!save.done[m.id];
+    c.cone.visible = won; c.halo.material.color.set(won ? m.color : '#2a3a5c'); c.halo.material.opacity = won ? .45 : .18;
+    if (!won) return; const a = artifactModel(m); a.position.copy(c.top).add(new THREE.Vector3(0, A.case ? .08 : .12, 0)); HQ.scene.add(a); HQ.arts[k] = a; });
 }
 function artifactModel(m) {
   const g = A['art-' + m.artifactKey]; if (g) return fitHeight(dress(g.scene.clone(true)), .3);
   const grp = new THREE.Group(); const gem = new THREE.Mesh(new THREE.OctahedronGeometry(.13, 0), new THREE.MeshStandardMaterial({ color: m.color, emissive: m.color, emissiveIntensity: .6, metalness: .3, roughness: .15, flatShading: true })); gem.position.y = .16; grp.add(gem); const gs = glowSprite(m.color, .5); gs.position.y = .16; grp.add(gs); return grp;
 }
-// the hologram: a see-through Earth that glows at its edges, with scan lines, latitude rings and the 5 mission pins
-const holoMat = (color, a = .55, grid = 0) => new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
-  uniforms: { uColor: { value: new THREE.Color(color) }, uTime: { value: 0 }, uA: { value: a }, uGrid: { value: grid } },
-  vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP; void main(){ vP = position; vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
-  fragmentShader: `uniform vec3 uColor; uniform float uTime, uA, uGrid; varying vec3 vN; varying vec3 vV; varying vec3 vP;
-    void main(){ float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.0); float scan = 0.75 + 0.25 * sin(vP.y * 60.0 - uTime * 3.0);
-      float g = 0.0; if (uGrid > 0.5) { vec3 n = normalize(vP); float lat = asin(clamp(n.y,-1.0,1.0)); float lon = atan(n.x, n.z); g = max(smoothstep(0.96, 1.0, abs(cos(lat * 9.0))), smoothstep(0.97, 1.0, abs(cos(lon * 9.0)))) * 0.35; }
-      gl_FragColor = vec4(uColor * (f * 1.4 + 0.12 + g) * scan, (f + 0.15 + g) * uA); }` });
+// hologram material: see-through, glowing at the edges, scan lines, an optional latitude/longitude grid; with vertex colours
+// (the Blender globe's land is coloured by biome) it tints them toward the hologram colour
+function holoMat(color, a = .55, grid = 0, vc = false) {
+  return new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false, vertexColors: vc,
+    uniforms: { uColor: { value: new THREE.Color(color) }, uTime: { value: 0 }, uA: { value: a }, uGrid: { value: grid }, uVC: { value: vc ? 1 : 0 } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP; varying vec3 vC; void main(){ vP = position; vC = vec3(1.0);
+      #ifdef USE_COLOR
+      vC = color.rgb;
+      #endif
+      vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `uniform vec3 uColor; uniform float uTime, uA, uGrid, uVC; varying vec3 vN; varying vec3 vV; varying vec3 vP; varying vec3 vC;
+      void main(){ float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.0); float scan = 0.78 + 0.22 * sin(vP.y * 70.0 - uTime * 3.0);
+        float g = 0.0; if (uGrid > 0.5) { vec3 n = normalize(vP); float lat = asin(clamp(n.y,-1.0,1.0)); float lon = atan(n.x, n.z); g = max(smoothstep(0.965, 1.0, abs(cos(lat * 9.0))), smoothstep(0.975, 1.0, abs(cos(lon * 9.0)))) * 0.4; }
+        vec3 base = mix(uColor, mix(uColor, vC * 1.6, 0.55), uVC);
+        gl_FragColor = vec4(base * (f * 1.25 + 0.14 + g) * scan, (f + 0.14 + g) * uA); }` });
+}
+// a soft additive halo that is brightest at the rim (the globe's atmosphere)
+const atmoMat = (color) => new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide, toneMapped: false,
+  uniforms: { uColor: { value: new THREE.Color(color) } },
+  vertexShader: `varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform vec3 uColor; varying vec3 vN; varying vec3 vV; void main(){ float f = pow(max(0.0, dot(normalize(vN), normalize(vV))), 3.0); gl_FragColor = vec4(uColor * f * .8, f * .8); }` });
+// a flowing dashed line (the routes between the missions): dashes run along the line over time
+const flowMat = (color) => new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+  uniforms: { uColor: { value: new THREE.Color(color) }, uTime: { value: 0 } },
+  vertexShader: `attribute float aT; varying float vT; void main(){ vT = aT; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `uniform vec3 uColor; uniform float uTime; varying float vT; void main(){ float d = fract(vT * 14.0 - uTime * 0.8); float a = smoothstep(0.0, 0.15, d) * (1.0 - smoothstep(0.55, 0.7, d)); float edge = smoothstep(0.0, 0.06, vT) * (1.0 - smoothstep(0.94, 1.0, vT)); gl_FragColor = vec4(uColor * (0.5 + a * 1.6), (0.25 + a) * edge); }` });
+const llDir = (lat, lon) => { const la = THREE.MathUtils.degToRad(lat), lo = THREE.MathUtils.degToRad(lon); return new THREE.Vector3(Math.cos(la) * Math.sin(lo), Math.sin(la), Math.cos(la) * Math.cos(lo)); };
 function buildGlobe() {
   const G = new THREE.Group(); G.position.copy(HQ.gc); HQ.scene.add(G); HQ.globe = G; const R = .68; HQ.R = R;
-  const spin = new THREE.Group(); G.add(spin); HQ.spin = spin; HQ.mats = [];
-  if (A.globe) { A.globe.scene.traverse((o) => { if (!o.isMesh) return; const land = /land/i.test(o.name); const mm = holoMat(land ? '#7af8ff' : '#2a7cff', land ? .9 : .35, land ? 0 : 1); HQ.mats.push(mm); const m = new THREE.Mesh(o.geometry, mm); m.scale.setScalar(R); spin.add(m); }); }
-  else { const mm = holoMat('#3a9cff', .45, 1); HQ.mats.push(mm); spin.add(new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32), mm)); }
-  const core = new THREE.Mesh(new THREE.SphereGeometry(R * .98, 32, 24), new THREE.MeshBasicMaterial({ color: '#06203f', transparent: true, opacity: .35, depthWrite: false })); spin.add(core);
-  // the beam of light up from the projector table
-  const beamM = holoMat('#5ff3ff', .35); HQ.mats.push(beamM); const beam = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.05, 1.0, .9, 48, 1, true), beamM); beam.position.y = -.8; G.add(beam);
-  for (const r of [1.12, 1.22]) { const ring = new THREE.Mesh(new THREE.TorusGeometry(R * r, .006, 6, 96).rotateX(Math.PI / 2), neon('#5ff3ff')); ring.material.transparent = true; ring.material.opacity = .6; G.add(ring); HQ['ring' + r] = ring; }
-  // pins
+  const spin = new THREE.Group(); spin.rotation.order = 'XYZ'; spin.rotation.x = .3; G.add(spin); HQ.spin = spin; const M = (m) => (HQ.mats.push(m), m);
+  if (A.globe) A.globe.scene.traverse((o) => { if (!o.isMesh) return; const land = /land/i.test(o.name);
+    const m = new THREE.Mesh(o.geometry, land ? M(holoMat('#7af8ff', .95, 0, !!o.geometry.attributes.color)) : M(holoMat('#2a7cff', .38, 1))); m.scale.setScalar(R * (land ? 1.004 : 1)); spin.add(m); });
+  else spin.add(new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32), M(holoMat('#3a9cff', .45, 1))));
+  spin.add(new THREE.Mesh(new THREE.SphereGeometry(R * .985, 40, 28), new THREE.MeshBasicMaterial({ color: '#051a38', transparent: true, opacity: .5, depthWrite: false })));
+  const atmo = new THREE.Mesh(new THREE.SphereGeometry(R * 1.18, 48, 32), atmoMat('#3fb8ff')); G.add(atmo);
+  // the light beam from the projector up to the globe, and a glowing disc on the table
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(R * .95, .95, HQ.gc.y - HQ.tableTop - R * .2, 48, 1, true), M(holoMat('#5ff3ff', .16))); beam.position.y = -(HQ.gc.y - HQ.tableTop) / 2 - R * .1; G.add(beam);
+  const disc = glowSprite('#5ff3ff', 1.9); disc.position.y = -(HQ.gc.y - HQ.tableTop) + .02; disc.material.opacity = .55; G.add(disc);
+  // a scanning ring that sweeps up and down the globe, and two tilted orbits with satellites
+  const scanRing = new THREE.Mesh(new THREE.TorusGeometry(R * 1.02, .005, 6, 120).rotateX(Math.PI / 2), neon('#9ff3ff')); G.add(scanRing);
+  const orbits = [[1.32, .45, .2, '#b57bff'], [1.46, -.35, -.15, '#5ff3ff']].map(([r, tx, tz, c]) => {
+    const o = new THREE.Group(); o.rotation.set(tx, 0, tz); G.add(o);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(R * r, .0035, 6, 160), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: .55, toneMapped: false })); ring.rotation.x = Math.PI / 2; o.add(ring);
+    const sat = glowSprite(c, .14); o.add(sat); return { o, sat, r: R * r, sp: rand(.25, .45) * (Math.random() < .5 ? -1 : 1), a: rand(0, 6) }; });
+  // routes: arcs from mission to mission over the globe, with dashes flowing along them
+  for (let k = 0; k < MISSIONS.length - 1; k++) {
+    const a = llDir(MISSIONS[k].lat, MISSIONS[k].lon), b = llDir(MISSIONS[k + 1].lat, MISSIONS[k + 1].lon), pts = [], ts = [], n = 64, ang = a.angleTo(b);
+    for (let i = 0; i <= n; i++) { const t = i / n, v = a.clone().lerp(b, t).normalize(); pts.push(v.multiplyScalar(R * (1.01 + Math.sin(t * Math.PI) * (.12 + ang * .08)))); ts.push(t); }
+    const curve = new THREE.CatmullRomCurve3(pts), geo = new THREE.TubeGeometry(curve, 96, .0045, 6, false);
+    const tAttr = []; const pos = geo.attributes.position; for (let i = 0; i < pos.count; i++) tAttr.push(Math.floor(i / 7) / 96); geo.setAttribute('aT', new THREE.Float32BufferAttribute(tAttr, 1));
+    spin.add(new THREE.Mesh(geo, M(flowMat(MISSIONS[k + 1].color))));
+  }
+  // the mission pins: a beacon of light, a pulsing ring, a bright head, its number; won missions get a gold star
   MISSIONS.forEach((m) => {
-    const la = THREE.MathUtils.degToRad(m.lat), lo = THREE.MathUtils.degToRad(m.lon), dir = new THREE.Vector3(Math.cos(la) * Math.sin(lo), Math.sin(la), Math.cos(la) * Math.cos(lo));
-    const pin = new THREE.Group(); pin.position.copy(dir).multiplyScalar(R * 1.01); pin.lookAt(dir.clone().multiplyScalar(2)); spin.add(pin);
-    const done = !!save.done[m.id], col = new THREE.Color(m.color);
-    const stick = new THREE.Mesh(new THREE.CylinderGeometry(.004, .004, .12, 6).rotateX(Math.PI / 2).translate(0, 0, .06), neon(col)); pin.add(stick);
-    const dot = glowSprite(col, .16); dot.position.z = .13; pin.add(dot);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(.025, .035, 32), neon(col)); ring.material.transparent = true; ring.material.side = THREE.DoubleSide; pin.add(ring);
-    const lbl = textSprite(`${m.n}`, m.color, .09); lbl.position.z = .2; pin.add(lbl);
-    dot.userData.mission = m; HQ.pins.push({ m, pin, dot, ring, dir, done });
+    const dir = llDir(m.lat, m.lon), col = new THREE.Color(m.color);
+    const pin = new THREE.Group(); pin.position.copy(dir).multiplyScalar(R * 1.005); pin.lookAt(dir.clone().multiplyScalar(5)); spin.add(pin);
+    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(.006, .02, .22, 12, 1, true).rotateX(Math.PI / 2).translate(0, 0, .11), M(holoMat(m.color, .9))); pin.add(beacon);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(.028, .036, 40), new THREE.MeshBasicMaterial({ color: col, transparent: true, side: THREE.DoubleSide, toneMapped: false, depthWrite: false })); pin.add(ring);
+    const ring2 = ring.clone(); ring2.material = ring.material.clone(); pin.add(ring2);
+    const head = glowSprite(col, .17); head.position.z = .23; pin.add(head);
+    const num = textSprite(`${m.n}`, '#ffffff', .07); num.position.z = .23; num.renderOrder = 3; num.material.depthTest = false; pin.add(num);
+    const star = textSprite('★', '#ffd36e', .07); star.position.set(.05, .05, .23); star.visible = !!save.done[m.id]; pin.add(star);
+    const label = textSprite(m.name.toUpperCase(), m.color, .032); label.position.set(0, .06, .27); label.material.depthTest = false; label.renderOrder = 4; label.visible = false; pin.add(label);
+    const hit = new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), new THREE.MeshBasicMaterial({ visible: false })); hit.position.z = .18; hit.userData.mission = m; pin.add(hit);
+    HQ.pins.push({ m, pin, head, ring, ring2, beacon, star, label, hit, dir });
   });
+  HQ.upd.push((dt, t) => {
+    scanRing.position.y = Math.sin(t * .7) * R * .92; const s = Math.sqrt(Math.max(0, 1 - (scanRing.position.y / (R * 1.02)) ** 2)); scanRing.scale.set(Math.max(.05, s), 1, Math.max(.05, s));
+    for (const o of orbits) { o.a += dt * o.sp; o.sat.position.set(Math.cos(o.a) * o.r, 0, Math.sin(o.a) * o.r); }
+    disc.material.opacity = .28 + Math.sin(t * 2) * .06;
+  });
+}
+// slow glowing dust in the air of the room
+function buildMotes() {
+  const n = save.gfx === 'low' ? 140 : 320, pos = new Float32Array(n * 3), seed = new Float32Array(n);
+  for (let i = 0; i < n; i++) { pos.set([HQ.gc.x + rand(-7, 7), rand(.2, 4.6), HQ.gc.z + rand(-5, 6)], i * 3); seed[i] = Math.random() * 6.28; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aS', new THREE.BufferAttribute(seed, 1));
+  const m = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, uniforms: { uTime: { value: 0 }, uPx: { value: renderer.getPixelRatio() } },
+    vertexShader: `attribute float aS; uniform float uTime, uPx; varying float vA; void main(){ vec3 p = position; p.y += sin(uTime * .3 + aS) * .25; p.x += cos(uTime * .2 + aS * 1.7) * .2; vec4 mv = modelViewMatrix * vec4(p, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = uPx * (3.0 + 2.0 * sin(aS * 3.0)) * (6.0 / -mv.z); vA = 0.35 + 0.35 * sin(uTime * 1.3 + aS * 5.0); }`,
+    fragmentShader: `varying float vA; void main(){ float d = length(gl_PointCoord - .5); gl_FragColor = vec4(vec3(.55, .95, 1.0) * 1.4, smoothstep(.5, .0, d) * vA); }` });
+  HQ.mats.push(m); HQ.scene.add(new THREE.Points(g, m));
 }
 function drawBoard() {
   const cv = HQ.boardCv, g = cv.getContext('2d'), W = cv.width, H = cv.height;
@@ -293,63 +389,108 @@ function drawBoard() {
   const acc = save.answered ? Math.round(save.correct / save.answered * 100) : 0;
   const tiles = [['MISSIONS', `${missionsDone()} / 5`], ['STARS', `${totalStars()} / 15`], ['ANSWERS', `${save.answered}`], ['ACCURACY', `${acc} %`], ['WORDS LEARNED', `${Object.keys(save.learned).length}`], ['TIME AS AGENT', `${Math.round(save.time / 60)} min`]];
   tiles.forEach(([k, v], i) => { const x = 80 + (i % 3) * 420, y = 270 + Math.floor(i / 3) * 210; g.fillStyle = 'rgba(95,243,255,.07)'; g.strokeStyle = 'rgba(95,243,255,.45)'; g.lineWidth = 3; g.beginPath(); g.roundRect(x, y, 380, 170, 24); g.fill(); g.stroke(); T(k, x + 28, y + 52, 26, '#8fb3d6', 700); T(v, x + 28, y + 128, 64, '#e8f7ff', 900); });
-  // missions column
   T('MISSIONS', 1400, 120, 40, '#b57bff', 900);
   MISSIONS.forEach((m, i) => { const y = 200 + i * 150, d = save.done[m.id]; g.fillStyle = d ? 'rgba(77,255,166,.08)' : 'rgba(255,255,255,.03)'; g.strokeStyle = d ? 'rgba(77,255,166,.5)' : 'rgba(143,179,214,.25)'; g.beginPath(); g.roundRect(1400, y, 560, 120, 20); g.fill(); g.stroke();
     T(`${m.n}. ${m.name.toUpperCase()}`, 1430, y + 50, 28, d ? '#e8f7ff' : '#8fb3d6'); T(m.place, 1430, y + 92, 22, '#8fb3d6', 600);
     T(d ? '★'.repeat(d.stars) + '☆'.repeat(3 - d.stars) : 'NOT DONE YET', 1940, y + 94, d ? 30 : 18, d ? '#ffd36e' : '#55607a', 700, 'right'); });
-  // accuracy bar
   g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(80, 760, 1200, 26); g.fillStyle = '#4dffa6'; g.shadowColor = '#4dffa6'; g.shadowBlur = 16; g.fillRect(80, 760, 12 * acc, 26); g.shadowBlur = 0;
   T('ACCURACY', 80, 740, 24, '#8fb3d6');
   const pk = window.FugioPacks ? FugioPacks.summary(PACKS, packIds) : { title: '', sub: '' }; T('QUESTIONS: ' + pk.title, 80, 880, 26, '#8fb3d6', 600);
   if (HQ.boardTex) HQ.boardTex.needsUpdate = true;
+  renderStatsPanel();
+}
+// the same stats as a readable panel (on a tall phone the wall board is too small to read)
+function renderStatsPanel() {
+  const acc = save.answered ? Math.round(save.correct / save.answered * 100) : 0;
+  $('statsPanel').innerHTML = `<div class="sp-head"><i>AGENT FILE</i><b>Agent Foxino</b><span>${esc(rankName())}</span></div>
+    <div class="sp-grid">${[['Missions', `${missionsDone()}/5`], ['Stars', `${totalStars()}/15`], ['Accuracy', `${acc}%`], ['Answers', save.answered], ['Words learned', Object.keys(save.learned).length], ['Time as agent', `${Math.round(save.time / 60)} min`]].map(([k, v]) => `<div><i>${k}</i><b>${v}</b></div>`).join('')}</div>
+    <div class="sp-bar"><i style="width:${acc}%"></i></div>
+    <div class="sp-list">${MISSIONS.map((m) => { const d = save.done[m.id]; return `<div class="${d ? 'won' : ''}" style="--c:${m.color}"><em>${m.n}</em><span><b>${esc(m.name)}</b>${esc(m.place)}</span><u>${d ? '★'.repeat(d.stars) + '☆'.repeat(3 - d.stars) : '—'}</u></div>`; }).join('')}</div>`;
+}
+// the Trophy Room: i = −1 the whole gallery (wide screens start there), 0..4 one case close up
+HQ.tIdx = -1;
+function setTrophy(i) {
+  HQ.tIdx = i; computeViews(); const to = i < 0 ? HQ.views.left : HQ.caseViews[i]; HQ.views.left = to;
+  HQ.tw = { to: 'left' + i, p0: camera.position.clone(), l0: HQ.look.clone(), p1: to.p.clone(), l1: to.l.clone(), t: 0, d: .9 }; SFX.whoosh();
+  $('labels').innerHTML = ''; $('labels').style.display = i < 0 ? '' : 'none';
+  const m = MISSIONS[Math.max(0, i)], d = save.done[m.id], card = $('tCard');
+  if (i < 0) { card.innerHTML = `<i>THE TROPHY ROOM</i><b>${missionsDone()} of 5 artifacts</b><span>Tap a case to look closer</span>`; card.style.setProperty('--c', '#5ff3ff'); }
+  else { card.style.setProperty('--c', m.color); card.innerHTML = d ? `<i>MISSION ${m.n} · ${esc(m.place.toUpperCase())}</i><b>${esc(m.artifact)}</b><span class="st">${'★'.repeat(d.stars)}${'☆'.repeat(3 - d.stars)}</span><span>Won back from the Magpie in “${esc(m.name)}”.</span>`
+      : `<i>MISSION ${m.n} · ${esc(m.place.toUpperCase())}</i><b>Empty case</b><span>Finish “${esc(m.name)}” to bring the ${esc(m.artifact)} home.</span><button class="holo-btn small" id="tPlay">PLAY MISSION ${m.n}</button>`;
+    const tp = $('tPlay'); if (tp) tp.onclick = () => { setView('globe'); setTimeout(() => selectMission(m), 650); }; }
 }
 function setView(v) {
-  if (HQ.tw && HQ.tw.to === v) return; SFX.whoosh();
-  const to = v === 'globe' ? globeView() : HQ.views[v]; HQ.tw = { to: v, p0: camera.position.clone(), l0: HQ.look.clone(), p1: to.p.clone(), l1: to.l.clone(), t: 0, d: v === 'globe' || HQ.view === 'globe' ? 1.4 : 1.0 }; HQ.view = v;
-  if (v === 'center') { showScreen('hq'); updateHQText(); }
-  else if (v === 'globe') { showScreen('globe'); renderMissionList(); $('card').classList.add('hidden-card'); }
-  else { showScreen('side'); $('sideTitle').textContent = v === 'left' ? 'TROPHY ROOM' : 'AGENT STATS'; if (v === 'right') drawBoard(); }
+  if (HQ.tw && HQ.tw.to === v) return; SFX.whoosh(); computeViews();
+  if (v === 'left') { HQ.tIdx = PORTRAIT() ? 0 : -1; if (HQ.tIdx >= 0) HQ.views.left = HQ.caseViews[0]; }
+  const to = HQ.views[v]; HQ.tw = { to: v, p0: camera.position.clone(), l0: HQ.look.clone(), p1: to.p.clone(), l1: to.l.clone(), t: 0, d: v === 'globe' || HQ.view === 'globe' ? 1.3 : 1.0 }; HQ.view = v;
+  document.body.dataset.view = v;
+  if (v === 'center') { showScreen('hq'); updateHQText(); HQ.selected = null; HQ.spinTo = null; }
+  else if (v === 'globe') { showScreen('globe'); renderMissionList(); $('card').classList.add('hidden-card'); $('globeHint').classList.remove('gone'); }
+  else { showScreen('side'); $('sideTitle').textContent = v === 'left' ? 'TROPHY ROOM' : 'AGENT STATS'; if (v === 'right') drawBoard(); $('statsPanel').classList.toggle('show', v === 'right'); $('trophyNav').classList.toggle('show', v === 'left'); $('labels').innerHTML = ''; if (v === 'left') { const keep = HQ.tw; setTrophy(HQ.tIdx); HQ.tw = keep; } }
 }
-// on a phone held upright the globe needs the camera further back (the mission card covers the lower half)
-function globeView() { const G = HQ.views.globe, c = HQ.gc; return camera.aspect < .8 ? { p: new THREE.Vector3(c.x + .05, c.y + .57, c.z + 3.35), l: new THREE.Vector3(c.x, c.y - .26, c.z) } : G; }
-function updateHQText() { $('hqRank').textContent = rankName(); $('hqStars').textContent = `${totalStars()} ★ · ${missionsDone()}/5 missions`; $('hqHint').textContent = missionsDone() === 5 ? 'Every artifact is home. Play again for 3 stars!' : 'Agent Foxino is waiting for his next mission'; }
+function updateHQText() { $('hqRank').textContent = rankName(); $('hqStars').textContent = `${totalStars()} ★ · ${missionsDone()}/5`; $('hqHint').textContent = missionsDone() === 5 ? 'Every artifact is home. Play again for 3 stars!' : missionsDone() ? `${5 - missionsDone()} missions left. The Magpie is still out there!` : 'Agent Foxino is waiting for his first mission'; }
 function renderMissionList() {
-  $('missionList').innerHTML = MISSIONS.map((m) => { const d = save.done[m.id]; return `<button class="m-chip${HQ.selected === m ? ' on' : ''}" data-id="${m.id}" style="--c:${m.color}"><i>${m.n}</i><div><b>${esc(m.name)}</b><span>${esc(m.place)}</span></div><em>${d ? '★'.repeat(d.stars) : ''}</em></button>`; }).join('');
+  $('missionList').innerHTML = MISSIONS.map((m) => { const d = save.done[m.id]; return `<button class="m-chip${HQ.selected === m ? ' on' : ''}${d ? ' won' : ''}" data-id="${m.id}" style="--c:${m.color}"><i>${m.n}</i><div><b>${esc(m.name)}</b><span>${esc(m.place)}</span></div><em>${d ? '★'.repeat(d.stars) : ''}</em></button>`; }).join('');
   $('missionList').querySelectorAll('.m-chip').forEach((b) => (b.onclick = () => selectMission(MISSIONS.find((m) => m.id === b.dataset.id))));
 }
 function selectMission(m) {
-  SFX.click(); HQ.selected = m; renderMissionList();
+  SFX.click(); HQ.selected = m; renderMissionList(); $('globeHint').classList.add('gone');
+  const on = $('missionList').querySelector('.m-chip.on'); if (on) on.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   $('cardN').textContent = `MISSION ${m.n} · ${m.where.toUpperCase()}`; $('cardName').textContent = m.name; $('cardPlace').textContent = m.place; $('cardStory').textContent = m.story;
   $('cardTime').textContent = `⏱ ${m.mins} min`; $('cardArt').textContent = `◆ ${m.artifact}`; const d = save.done[m.id]; $('cardBest').textContent = d ? `Best: ${'★'.repeat(d.stars)}${'☆'.repeat(3 - d.stars)}` : 'New mission';
-  $('card').classList.remove('hidden-card');
-  const la = THREE.MathUtils.degToRad(m.lat), lo = THREE.MathUtils.degToRad(m.lon);
-  HQ.spinTo = { x: la * .75, y: -lo };
+  $('card').style.setProperty('--c', m.color); const c = $('card'); c.classList.add('hidden-card'); void c.offsetWidth; c.classList.remove('hidden-card');
+  HQ.spinTo = spinFor(m); HQ.vel = { x: 0, y: 0 };
 }
+// the globe turn that brings a mission's pin to face the camera (a little tilt for places far north or south)
+const spinFor = (m) => ({ x: THREE.MathUtils.degToRad(m.lat) * .8, y: -THREE.MathUtils.degToRad(m.lon) });
 function hqFrame(dt, t) {
   for (const mm of HQ.mats) mm.uniforms.uTime.value = t;
-  if (HQ.spinTo) { const s = HQ.spin.rotation; let dy = HQ.spinTo.y - s.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); s.y += dy * Math.min(1, dt * 3); s.x += (HQ.spinTo.x - s.x) * Math.min(1, dt * 3); }
-  else { HQ.spin.rotation.y += dt * .15; HQ.spin.rotation.x += (0.25 - HQ.spin.rotation.x) * dt; }
-  HQ.spin.rotation.order = 'XYZ';
-  if (HQ['ring1.12']) { HQ['ring1.12'].rotation.z += dt * .4; HQ['ring1.22'].position.y = Math.sin(t * 1.4) * .04; }
-  for (const p of HQ.pins) { const s = 1 + Math.sin(t * 3 + p.m.n) * .25; p.ring.scale.setScalar(HQ.selected === p.m ? s * 1.8 : s); p.dot.scale.setScalar(HQ.selected === p.m ? .26 : .16); }
+  for (const f of HQ.upd) f(dt, t);
+  const s = HQ.spin.rotation, drag = HQ.drag;
+  if (drag && drag.on) { /* the finger turns it */ }
+  else if (HQ.spinTo) { let dy = HQ.spinTo.y - s.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); s.y += dy * Math.min(1, dt * 3.2); s.x += (HQ.spinTo.x - s.x) * Math.min(1, dt * 3.2); }
+  else if (HQ.vel && (Math.abs(HQ.vel.y) > .002 || Math.abs(HQ.vel.x) > .002)) { s.y += HQ.vel.y * dt * 60; s.x = clamp(s.x + HQ.vel.x * dt * 60, -1.1, 1.1); HQ.vel.y *= Math.pow(.05, dt); HQ.vel.x *= Math.pow(.05, dt); }
+  else { s.y += dt * (HQ.view === 'globe' ? .06 : .14); s.x += (.3 - s.x) * dt * .5; }
+  for (const p of HQ.pins) { const sel = HQ.selected === p.m, k = (t * .8 + p.m.n * .23) % 1, k2 = (k + .5) % 1;
+    p.ring.scale.setScalar(1 + k * (sel ? 3.4 : 2)); p.ring.material.opacity = (1 - k) * .9; p.ring2.scale.setScalar(1 + k2 * (sel ? 3.4 : 2)); p.ring2.material.opacity = (1 - k2) * .9;
+    p.head.scale.setScalar(sel ? .28 + Math.sin(t * 6) * .03 : .17); p.beacon.scale.set(1, 1, sel ? 1.6 : 1); p.head.position.z = sel ? .34 : .23;
+    p.label.visible = sel; p.label.position.z = sel ? .42 : .29; p.star.visible = !!save.done[p.m.id]; }
   HQ.arts.forEach((a) => a && (a.rotation.y += dt * .8));
+  HQ.cases.forEach((c, k) => { if (c.cone.visible) c.cone.material.uniforms.uA.value = .08 + Math.sin(t * 1.5 + k) * .025; });
   HQ.fox.update(dt, false, 0);
   if (HQ.tw) { const w = HQ.tw; w.t = Math.min(1, w.t + dt / w.d); const k = ease(w.t); camera.position.lerpVectors(w.p0, w.p1, k); HQ.look.lerpVectors(w.l0, w.l1, k); if (w.t >= 1) HQ.tw = null; }
-  else if (HQ.view === 'center') { camera.position.x = HQ.views.center.p.x + Math.sin(t * .2) * .15; }
+  else if (HQ.view === 'center') { const v = HQ.views.center; camera.position.x = v.p.x + Math.sin(t * .2) * .12; camera.position.y = v.p.y + Math.sin(t * .27) * .04; }
   camera.lookAt(HQ.look);
-  if (HQ.view === 'left' && !HQ.tw) placeLabels(); else if ($('labels').childElementCount && HQ.view !== 'left') $('labels').innerHTML = '';
+  if (HQ.view === 'left' && !HQ.tw && HQ.tIdx < 0) placeLabels();
 }
 function placeLabels() {
-  const box = $('labels'); if (!box.childElementCount) box.innerHTML = MISSIONS.map((m) => { const d = save.done[m.id]; return `<div class="plate${d ? '' : ' locked'}"><b>${d ? esc(m.artifact) : '???'}</b>${d ? `<i>${'★'.repeat(d.stars)}${'☆'.repeat(3 - d.stars)}</i>` : esc(m.place)}</div>`; }).join('');
-  MISSIONS.forEach((m, k) => { const c = HQ.cases[k]; if (!c) return; const v = c.top.clone().add(new THREE.Vector3(0, -.25, 0)).project(camera); const el = box.children[k]; el.style.left = ((v.x + 1) / 2 * innerWidth) + 'px'; el.style.top = ((1 - v.y) / 2 * innerHeight) + 'px'; el.style.display = v.z < 1 ? '' : 'none'; });
+  const box = $('labels'); if (!box.childElementCount) box.innerHTML = MISSIONS.map((m) => { const d = save.done[m.id]; return `<div class="plate${d ? '' : ' locked'}" style="--c:${m.color}"><b>${d ? esc(m.artifact) : 'LOCKED'}</b>${d ? `<i>${'★'.repeat(d.stars)}${'☆'.repeat(3 - d.stars)}</i>` : `<span>${esc(m.place)}</span>`}</div>`; }).join('');
+  [...box.children].forEach((el, k) => { el.onclick = () => setTrophy(k); });
+  MISSIONS.forEach((m, k) => { const c = HQ.cases[k]; if (!c) return; const v = c.top.clone().add(new THREE.Vector3(0, -.32, 0)).project(camera); const el = box.children[k]; el.style.left = ((v.x + 1) / 2 * innerWidth) + 'px'; el.style.top = ((1 - v.y) / 2 * innerHeight) + 'px'; el.style.display = v.z < 1 ? '' : 'none'; });
 }
-// tapping a pin on the globe
+// the globe is touchable: drag to spin it (it keeps turning a little when let go), tap a pin to fly to that mission
 const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+HQ.drag = { on: false }; HQ.vel = { x: 0, y: 0 };
 canvas.addEventListener('pointerdown', (e) => {
-  if (mode !== 'hq' || HQ.view !== 'globe') return;
+  if (mode !== 'hq' || HQ.view !== 'globe' || anyOverlay()) return;
+  HQ.drag = { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, moved: 0 }; canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', (e) => {
+  const d = HQ.drag; if (!d.on || e.pointerId !== d.id) return;
+  const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
+  if (d.moved > 8) { HQ.spinTo = null; const k = 3.2 / Math.min(innerWidth, innerHeight); HQ.spin.rotation.y += dx * k; HQ.spin.rotation.x = clamp(HQ.spin.rotation.x + dy * k, -1.1, 1.1); HQ.vel = { x: dy * k, y: dx * k }; $('globeHint').classList.add('gone'); }
+});
+const endDrag = (e) => {
+  const d = HQ.drag; if (!d.on || e.pointerId !== d.id) return; d.on = false;
+  if (d.moved <= 8) { mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(mouse, camera);
+    const hit = ray.intersectObjects(HQ.pins.map((p) => p.hit), false)[0]; if (hit) selectMission(hit.object.userData.mission); }
+};
+canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+// on the HQ screen itself, a tap on the hologram opens the mission select
+canvas.addEventListener('click', (e) => {
+  if (mode !== 'hq' || HQ.view !== 'center' || anyOverlay() || HQ.tw) return;
   mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(mouse, camera);
-  const hit = ray.intersectObjects(HQ.pins.map((p) => p.dot), false)[0]; if (hit) selectMission(hit.object.userData.mission);
+  const s = new THREE.Sphere(HQ.gc, HQ.R * 1.3); if (ray.ray.intersectsSphere(s)) { SFX.click(); setView('globe'); }
 });
 
 /* ================= missions ================= */
@@ -374,14 +515,14 @@ async function runStages() {
   if (mission) finishMission();
 }
 function stageBackdrop() { // the HQ hologram view stays behind the story screens
-  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; const gv = globeView(); camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.spinTo = { x: THREE.MathUtils.degToRad(m.lat) * .75, y: -THREE.MathUtils.degToRad(m.lon) }; }
+  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; computeViews(); const gv = HQ.views.globe; camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.spinTo = spinFor(m); }
 }
 function magpieSet(kind) {
   if (!A.magpie) return null; const set = makeSet('#0e1120'), mp = new THREE.Group(), rg = rigged(A.magpie, 1.5); mp.add(rg.inner); set.S.add(mp); rg.play(kind === 'caught' ? 'caught' : 'laugh', 0);
   if (kind === 'caught' && A.net) { const n = A.net.scene.clone(true); dress(n); set.S.add(n); }   // (the net is modelled to fit over her sitting)
   const glow = glowSprite('#b57bff', 6); glow.position.set(0, 1, -1.5); glow.material.opacity = .35; set.S.add(glow);
-  set.cam.position.set(.35, 1.05, 2.5); set.cam.lookAt(0, .45, 0);   // (she stands in the top half, over the story panel)
-  const sp = new THREE.SpotLight('#ffe9c8', 60, 12, .5, .5, 1.2); sp.position.set(1.5, 4, 3); sp.target.position.set(0, .7, 0); set.S.add(sp, sp.target); const fill = new THREE.PointLight('#b57bff', 18, 8, 1.5); fill.position.set(-1.6, 1.4, 1.2); set.S.add(fill); set.upd.push((dt, t) => { rg.mixer.update(dt); mp.rotation.y = Math.sin(t * .4) * .25; });
+  const P = camera.aspect < .9; set.cam.position.set(.35, P ? 1.2 : 1.05, P ? 4.1 : 2.5); set.cam.lookAt(0, P ? .2 : .45, 0);   // (she stands in the top half, over the story panel)
+  const sp = new THREE.SpotLight('#ffe9c8', 30, 12, .5, .5, 1.2); sp.position.set(1.5, 4, 3); sp.target.position.set(0, .7, 0); set.S.add(sp, sp.target); const fill = new THREE.PointLight('#b57bff', 18, 8, 1.5); fill.position.set(-1.6, 1.4, 1.2); set.S.add(fill); set.upd.push((dt, t) => { rg.mixer.update(dt); mp.rotation.y = Math.sin(t * .4) * .25; });
   return set;
 }
 function briefing(st) {
@@ -415,7 +556,7 @@ function makeSet(fog = '#0b1024') {
 function vaultSet() {
   if (!A.vaultdoor) return null; const set = makeSet(mission.m.theme.fog), v = A.vaultdoor.scene.clone(true); dress(v); set.S.add(v);
   const b = new THREE.Box3().setFromObject(v), h = b.max.y - b.min.y; set.door = v.getObjectByName('Door'); set.wheel = v.getObjectByName('Wheel');
-  set.cam.position.set(0, h * .5, h * 2.6); set.cam.lookAt(0, h * .12, 0); set.spin = 0; set.open = 0;   // (the door sits in the top half, over the question panel)
+  const P = camera.aspect < .9; set.cam.position.set(0, h * .5, h * (P ? 3.4 : 2.6)); set.cam.lookAt(0, h * (P ? -.05 : .12), 0); set.spin = 0; set.open = 0;   // (the door sits in the top half, over the question panel)
   const pl = new THREE.PointLight('#bfe9ff', 40, 14, 1.4); pl.position.set(1.5, h * .9, h * .9); set.S.add(pl); const rim = glowSprite(mission.m.theme.trim, h * 2.2); rim.position.set(0, h * .47, -.4); rim.material.opacity = .25; set.S.add(rim);
   set.upd.push((dt) => { if (set.wheel) set.wheel.rotation.z += (set.spin - set.wheel.rotation.z) * Math.min(1, dt * 4); if (set.door && set.open) set.door.rotation.y = lerp(set.door.rotation.y, -1.7, Math.min(1, dt * 1.6)); });
   return set;
@@ -541,7 +682,16 @@ function playRoom(st) {
     // Foxino
     R.fox = makeFoxino(); S.add(R.fox.root); R.shadow = blobShadow(.45); S.add(R.shadow);
     R.pos = R.start.clone(); R.face = Math.PI; R.fox.root.position.copy(R.pos); R.fox.root.rotation.y = R.face;
-    R.camPos = R.pos.clone().add(new THREE.Vector3(0, 9.5, 4.2)); camera.position.copy(R.camPos); camera.lookAt(R.pos);
+    R.camPos = R.pos.clone().add(new THREE.Vector3(0, 24, 14)); camera.position.copy(R.camPos); camera.lookAt(R.pos);   // (the room opens with the camera swooping down)
+    // atmosphere: a soft light following Foxino, dust in the place's colour, a beam of light over the exit
+    R.foxLight = new THREE.PointLight(th.trim, 8, 6, 1.6); S.add(R.foxLight);
+    { const n = 160, pos = new Float32Array(n * 3), sd = new Float32Array(n); for (let i = 0; i < n; i++) { pos.set([ox + rand(-1, W * CELL), rand(.2, 3), oz + rand(-1, H * CELL)], i * 3); sd[i] = rand(0, 6.28); }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aS', new THREE.BufferAttribute(sd, 1));
+      const mm = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, uniforms: { uTime: { value: 0 }, uC: { value: new THREE.Color(th.trim) }, uPx: { value: renderer.getPixelRatio() } },
+        vertexShader: `attribute float aS; uniform float uTime, uPx; varying float vA; void main(){ vec3 p = position; p.y += sin(uTime * .4 + aS) * .3; p.x += cos(uTime * .3 + aS * 1.3) * .25; vec4 mv = modelViewMatrix * vec4(p, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = uPx * 3.5 * (12.0 / -mv.z); vA = .3 + .3 * sin(uTime * 1.5 + aS * 4.0); }`,
+        fragmentShader: `uniform vec3 uC; varying float vA; void main(){ float d = length(gl_PointCoord - .5); gl_FragColor = vec4(uC * 1.3, smoothstep(.5, .0, d) * vA); }` });
+      R.motes = new THREE.Points(g, mm); S.add(R.motes); }
+    if (R.exit) { R.exitBeam = new THREE.Mesh(new THREE.CylinderGeometry(.55, .75, 5, 32, 1, true), holoMat(th.trim, .5)); R.exitBeam.position.copy(R.exit.p).setY(2.5); S.add(R.exitBeam); }
     $('hudStage').textContent = st.title; $('hudGoal').textContent = st.goal || ''; $('hudSpotted').textContent = mission.stats.spotted;
     $('hudTimer').textContent = ''; $('hudTimer').className = 'timer';
     showScreen('hud'); mode = 'room';
@@ -609,7 +759,8 @@ function roomFrame(dt, t) {
     const want = Math.atan2(nx, nz); let da = want - R.face; da = Math.atan2(Math.sin(da), Math.cos(da)); R.face += da * Math.min(1, dt * 12); }
   R.fox.root.position.copy(R.pos); R.fox.root.rotation.y = R.face; R.shadow.position.set(R.pos.x, .02, R.pos.z); R.fox.update(dt, mag > .1, speed);
   // camera follows
-  const want = R.pos.clone().add(new THREE.Vector3(0, camera.aspect < .8 ? 12 : 9.5, camera.aspect < .8 ? 5 : 4.2)); R.camPos.lerp(want, Math.min(1, dt * 4)); camera.position.copy(R.camPos); camera.lookAt(R.pos.x, .4, R.pos.z - .5);
+  const P = camera.aspect < .9, want = R.pos.clone().add(new THREE.Vector3(0, P ? 12.5 : 9.5, P ? 3.6 : 4.2)); R.camPos.lerp(want, Math.min(1, dt * (R.t < 1.4 ? 2.2 : 4))); camera.position.copy(R.camPos); camera.lookAt(R.pos.x, .3, R.pos.z + (P ? 1.2 : -.5));   // (tall screens: Foxino a little above the middle, the controls cover the bottom)
+  if (R.foxLight) R.foxLight.position.set(R.pos.x, 2.4, R.pos.z + .6); if (R.motes) R.motes.material.uniforms.uTime.value = t; if (R.exitBeam) R.exitBeam.material.uniforms.uTime.value = t;
   if (R.camLock) { camera.position.copy(R.camLock.p); camera.lookAt(R.camLock.l); }   // (test hook: a fixed close-up)
   // exit
   if (R.exit) { const locked = R.hasArt && !R.art.taken; R.exit.ring.material.color.set(locked ? '#ff3a5a' : mission.m.theme.trim); R.exit.ring.rotation.y += dt; R.exit.glow.material.opacity = .5 + Math.sin(t * 4) * .3;
@@ -706,7 +857,12 @@ $('btnSelect').onclick = () => { SFX.click(); setView('globe'); };
 $('goTrophy').onclick = () => setView('left');
 $('goStats').onclick = () => setView('right');
 $('sideBack').onclick = () => setView('center');
-$('globeBack').onclick = () => { HQ.spinTo = null; HQ.selected = null; setView('center'); };
+$('tPrev').onclick = () => setTrophy(HQ.tIdx <= 0 ? 4 : HQ.tIdx - 1);
+$('tNext').onclick = () => setTrophy(HQ.tIdx >= 4 ? 0 : HQ.tIdx + 1);
+{ let sx = null; const sw = $('side');
+  sw.addEventListener('pointerdown', (e) => { if (HQ.view === 'left') sx = e.clientX; });
+  sw.addEventListener('pointerup', (e) => { if (sx === null) return; const dx = e.clientX - sx; sx = null; if (Math.abs(dx) > 50) setTrophy(dx < 0 ? (HQ.tIdx >= 4 ? 0 : HQ.tIdx + 1) : (HQ.tIdx <= 0 ? 4 : HQ.tIdx - 1)); }); }
+$('globeBack').onclick = () => setView('center');
 $('cardStart').onclick = () => { if (HQ.selected) startMission(HQ.selected); };
 
 /* ================= loop ================= */
@@ -715,11 +871,11 @@ function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now; const t = now / 1000;
   requestAnimationFrame(frame);   // (first, so one bad frame can never stop the game)
   const R = room;
-  if (mode === 'room' && R) { roomFrame(dt, t); renderer.render(R.S, camera); save.time += dt; }
-  else if (mode === 'set' && SET) { SET.cam.aspect = camera.aspect; SET.cam.updateProjectionMatrix(); for (const f of SET.upd) f(dt, t); renderer.render(SET.S, SET.cam); }
-  else if (HQ.scene && HQ.fox) { hqFrame(dt, t); renderer.render(HQ.scene, camera); }
+  if (mode === 'room' && R) { roomFrame(dt, t); draw(R.S, camera, R.bloom ?? .35); save.time += dt; }
+  else if (mode === 'set' && SET) { SET.cam.aspect = camera.aspect; SET.cam.updateProjectionMatrix(); for (const f of SET.upd) f(dt, t); draw(SET.S, SET.cam, .35); }
+  else if (HQ.scene && HQ.fox) { hqFrame(dt, t); draw(HQ.scene, camera, .4); }
 }
 (async () => {
-  await loadAssets(); buildHQ(); mode = 'hq'; showScreen('hq'); updateHQText(); requestAnimationFrame(frame);
-  window.FS = { THREE, HQ, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
+  await loadAssets(); buildHQ(); window.__hqReady = true; mode = 'hq'; document.body.classList.toggle('portrait', PORTRAIT()); document.body.dataset.view = 'center'; showScreen('hq'); updateHQText(); requestAnimationFrame(frame);
+  window.FS = { THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
 })();
