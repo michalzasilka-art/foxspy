@@ -83,7 +83,8 @@ async function loadAssets() {
     ['bot', 'models/bolt-bot.glb?v=1'], ['secam', 'models/security-camera.glb?v=1'], ['emitter', 'models/laser-emitter.glb?v=1'], ['vaultdoor', 'models/vault-door.glb?v=1'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=1'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=1`]),
   ];
-  await Promise.all(list.map(async ([k, u]) => { A[k] = await tryLoad(u); bar.style.width = (++done / list.length * 100) + '%'; }));
+  const subs = ['Secure connection to HQ…', 'Decrypting mission files…', 'Charging the stun laser…', 'Scanning for Bolt-Bots…', 'Locating the Magpie…'];
+  await Promise.all(list.map(async ([k, u]) => { A[k] = await tryLoad(u); done++; bar.style.width = (done / list.length * 100) + '%'; $('loadSub').textContent = subs[Math.min(subs.length - 1, Math.floor(done / list.length * subs.length))]; }));
 }
 // the models' "Glow" material becomes emissive; everything gets the game's look
 function dress(root) {
@@ -140,7 +141,7 @@ function textSprite(text, color = '#5ff3ff', h = .22) {
 }
 
 /* ================= UI helpers ================= */
-const screens = ['loading', 'hq', 'side', 'globe', 'hud'];
+const screens = ['hq', 'side', 'globe', 'hud'];
 function showScreen(id) { for (const s of screens) $(s).classList.toggle('show', s === id); }
 const overlay = (id, on) => $(id).classList.toggle('show', on);
 let toastT = 0;
@@ -360,7 +361,7 @@ function buildGlobe() {
     const head = glowSprite(col, .17); head.position.z = .23; pin.add(head);
     const num = textSprite(`${m.n}`, '#ffffff', .07); num.position.z = .23; num.renderOrder = 3; num.material.depthTest = false; pin.add(num);
     const star = textSprite('★', '#ffd36e', .07); star.position.set(.05, .05, .23); star.visible = !!save.done[m.id]; pin.add(star);
-    const label = textSprite(m.name.toUpperCase(), m.color, .032); label.position.set(0, .06, .27); label.material.depthTest = false; label.renderOrder = 4; label.visible = false; pin.add(label);
+    const label = new THREE.Object3D(); label.position.z = .3; pin.add(label);
     const hit = new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), new THREE.MeshBasicMaterial({ visible: false })); hit.position.z = .18; hit.userData.mission = m; pin.add(hit);
     HQ.pins.push({ m, pin, head, ring, ring2, beacon, star, label, hit, dir });
   });
@@ -453,8 +454,9 @@ function hqFrame(dt, t) {
   else { s.y += dt * (HQ.view === 'globe' ? .06 : .14); s.x += (.3 - s.x) * dt * .5; }
   for (const p of HQ.pins) { const sel = HQ.selected === p.m, k = (t * .8 + p.m.n * .23) % 1, k2 = (k + .5) % 1;
     p.ring.scale.setScalar(1 + k * (sel ? 3.4 : 2)); p.ring.material.opacity = (1 - k) * .9; p.ring2.scale.setScalar(1 + k2 * (sel ? 3.4 : 2)); p.ring2.material.opacity = (1 - k2) * .9;
-    p.head.scale.setScalar(sel ? .28 + Math.sin(t * 6) * .03 : .17); p.beacon.scale.set(1, 1, sel ? 1.6 : 1); p.head.position.z = sel ? .34 : .23;
-    p.label.visible = sel; p.label.position.z = sel ? .42 : .29; p.star.visible = !!save.done[p.m.id]; }
+    p.head.scale.setScalar(sel ? .3 + Math.sin(t * 6) * .03 : (HQ.selected ? .13 : .17)); p.beacon.scale.set(sel ? 1.6 : 1, sel ? 1.6 : 1, sel ? 1.6 : 1); p.head.position.z = sel ? .35 : .23; p.head.material.opacity = HQ.selected && !sel ? .6 : 1;
+ p.star.visible = !!save.done[p.m.id]; }
+  placePinTag();
   HQ.arts.forEach((a) => a && (a.rotation.y += dt * .8));
   HQ.cases.forEach((c, k) => { if (c.cone.visible) c.cone.material.uniforms.uA.value = .08 + Math.sin(t * 1.5 + k) * .025; });
   HQ.fox.update(dt, false, 0);
@@ -462,6 +464,15 @@ function hqFrame(dt, t) {
   else if (HQ.view === 'center') { const v = HQ.views.center; camera.position.x = v.p.x + Math.sin(t * .2) * .12; camera.position.y = v.p.y + Math.sin(t * .27) * .04; }
   camera.lookAt(HQ.look);
   if (HQ.view === 'left' && !HQ.tw && HQ.tIdx < 0) placeLabels();
+}
+// the lock-on tag over the chosen pin: a reticle and the place name, in the page (always sharp), following the pin
+function placePinTag() {
+  const el = $('pinTag'), p = HQ.selected && HQ.view === 'globe' && !HQ.tw && HQ.pins.find((q) => q.m === HQ.selected);
+  if (!p) { el.classList.remove('show'); return; }
+  const w = p.label.getWorldPosition(new THREE.Vector3()), front = w.clone().sub(HQ.gc).dot(camera.position.clone().sub(HQ.gc)) > 0, v = w.project(camera);
+  if (!front) { el.classList.remove('show'); return; }
+  if (el.dataset.id !== p.m.id) { el.dataset.id = p.m.id; el.style.setProperty('--c', p.m.color); el.innerHTML = `<i></i><b>${esc(p.m.place.split(',')[0].toUpperCase())}</b><span>${p.m.lat.toFixed(1)}° ${p.m.lat >= 0 ? 'N' : 'S'} · ${Math.abs(p.m.lon).toFixed(1)}° ${p.m.lon >= 0 ? 'E' : 'W'}</span>`; el.classList.remove('show'); void el.offsetWidth; }
+  el.style.left = ((v.x + 1) / 2 * innerWidth) + 'px'; el.style.top = ((1 - v.y) / 2 * innerHeight) + 'px'; el.classList.add('show');
 }
 function placeLabels() {
   const box = $('labels'); if (!box.childElementCount) box.innerHTML = MISSIONS.map((m) => { const d = save.done[m.id]; return `<div class="plate${d ? '' : ' locked'}" style="--c:${m.color}"><b>${d ? esc(m.artifact) : 'LOCKED'}</b>${d ? `<i>${'★'.repeat(d.stars)}${'☆'.repeat(3 - d.stars)}</i>` : `<span>${esc(m.place)}</span>`}</div>`; }).join('');
@@ -549,7 +560,7 @@ const lastSentence = () => $('qSentence').textContent.replace(/\s*\([^)]*\)/, ''
 let SET = null;
 function makeSet(fog = '#0b1024') {
   const S = new THREE.Scene(); S.background = new THREE.Color(fog); S.fog = new THREE.Fog(fog, 8, 30);
-  S.add(new THREE.HemisphereLight('#cfe3ff', '#20142e', 1.3)); const k = new THREE.DirectionalLight('#ffffff', 1.6); k.position.set(3, 6, 5); S.add(k);
+  S.add(new THREE.HemisphereLight('#cfe3ff', '#20142e', .9)); const k = new THREE.DirectionalLight('#ffffff', 1.1); k.position.set(3, 6, 5); S.add(k);
   const fl = new THREE.Mesh(new THREE.CircleGeometry(12, 48).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#141a30', metalness: .6, roughness: .3 })); S.add(fl);
   return { S, cam: new THREE.PerspectiveCamera(50, camera.aspect, .05, 100), upd: [] };
 }
@@ -585,9 +596,18 @@ function finishMission() {
   $('repArt').textContent = first ? `◆ The ${m.artifact} is now in your Trophy Room!` : `◆ The ${m.artifact} is safe in your Trophy Room.`;
   const miss = [...new Map(mission.missed.map((q) => [q.src, q])).values()].slice(0, 6);
   $('repMissed').innerHTML = miss.length ? miss.map((q) => `<div>${esc(q.before)}<b>${esc(q.right)}</b>${esc(q.after)}</div>`).join('') : '<div>No mistakes. Perfect agent work!</div>';
-  overlay('report', true); mission = null; mode = 'hq';
+  overlay('report', true); $('report').classList.add('low');
+  showScreen(null);
+  { const set = makeSet('#070b1e'), a = artifactModel(m); fitHeight(a, .55); set.S.add(a); const gl = glowSprite(m.color, 1.8); gl.position.set(0, .3, -.6); gl.material.opacity = .3; set.S.add(gl);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(.75, .015, 8, 80).rotateX(Math.PI / 2), neon(m.color)); set.S.add(ring);
+    const sp = new THREE.PointLight('#ffffff', 6, 8, 1.5); sp.position.set(1, 2.2, 2); set.S.add(sp); const fill = new THREE.PointLight(m.color, 20, 6, 1.5); fill.position.set(-1.4, .8, 1); set.S.add(fill);
+    const P = camera.aspect < .9; set.cam.position.set(0, .85, P ? 5.2 : 3.2); set.cam.lookAt(P ? 0 : .55, P ? -.95 : .25, 0); set.bloom = .15;
+    set.upd.push((dt, t) => { a.rotation.y += dt * 1.1; a.position.y = .08 + Math.sin(t * 1.6) * .05; ring.scale.setScalar(1 + Math.sin(t * 2) * .04); });
+    SET = set; mode = 'set'; }
+  [...$('repStars').children].forEach((el, k) => { el.style.animationDelay = (.35 + k * .28) + 's'; });
+  mission = null;
 }
-$('repHome').onclick = () => { SFX.click(); overlay('report', false); goHQ(); };
+$('repHome').onclick = () => { SFX.click(); overlay('report', false); $('report').classList.remove('low'); SET = null; mode = 'hq'; goHQ(); };
 function goHQ() { mode = 'hq'; refreshTrophies(); HQ.pins.forEach((p) => (p.done = !!save.done[p.m.id])); drawBoard(); HQ.view = 'globe'; setView('center'); HQ.spinTo = null; HQ.selected = null; }
 
 /* ================= rooms (sneaking, laser halls, escapes) ================= */
@@ -872,10 +892,10 @@ function frame(now) {
   requestAnimationFrame(frame);   // (first, so one bad frame can never stop the game)
   const R = room;
   if (mode === 'room' && R) { roomFrame(dt, t); draw(R.S, camera, R.bloom ?? .35); save.time += dt; }
-  else if (mode === 'set' && SET) { SET.cam.aspect = camera.aspect; SET.cam.updateProjectionMatrix(); for (const f of SET.upd) f(dt, t); draw(SET.S, SET.cam, .35); }
+  else if (mode === 'set' && SET) { SET.cam.aspect = camera.aspect; SET.cam.updateProjectionMatrix(); for (const f of SET.upd) f(dt, t); draw(SET.S, SET.cam, SET.bloom ?? .35); }
   else if (HQ.scene && HQ.fox) { hqFrame(dt, t); draw(HQ.scene, camera, .4); }
 }
 (async () => {
-  await loadAssets(); buildHQ(); window.__hqReady = true; mode = 'hq'; document.body.classList.toggle('portrait', PORTRAIT()); document.body.dataset.view = 'center'; showScreen('hq'); updateHQText(); requestAnimationFrame(frame);
+  await loadAssets(); buildHQ(); window.__hqReady = true; mode = 'hq'; $('loading').classList.add('out'); setTimeout(() => $('loading').classList.remove('show', 'out'), 700); document.body.classList.toggle('portrait', PORTRAIT()); document.body.dataset.view = 'center'; setTimeout(() => showScreen('hq'), 1400); updateHQText(); requestAnimationFrame(frame);
   window.FS = { THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
 })();

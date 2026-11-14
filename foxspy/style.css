@@ -294,3 +294,39 @@ body.portrait .plate b { font-size: 9px; }
 .tcard .st { font-size: 22px; color: var(--go); text-shadow: 0 0 12px rgba(255,211,110,.6); }
 .tcard .holo-btn { margin-top: 6px; }
 .plate { pointer-events: auto; cursor: pointer; }
+/* the lock-on tag over the chosen pin */
+#pinTag { position: absolute; transform: translate(-50%, -100%); margin-top: -22px; display: flex; flex-direction: column; align-items: center; gap: 1px; pointer-events: none; opacity: 0; transition: opacity .3s; }
+#pinTag.show { opacity: 1; animation: tagin .45s cubic-bezier(.2,1.4,.4,1); }
+@keyframes tagin { from { transform: translate(-50%, -80%) scale(.6); } to { transform: translate(-50%, -100%) scale(1); } }
+#pinTag i { position: absolute; left: 50%; bottom: -40px; width: 46px; height: 46px; margin-left: -23px; border: 2px solid var(--c); border-radius: 50%; box-shadow: 0 0 14px var(--c), inset 0 0 10px var(--c);
+  background: conic-gradient(from 0deg, transparent 0 20%, color-mix(in srgb, var(--c) 40%, transparent) 20% 30%, transparent 30% 70%, color-mix(in srgb, var(--c) 40%, transparent) 70% 80%, transparent 80%); animation: spinr 3s linear infinite; }
+@keyframes spinr { to { transform: rotate(360deg); } }
+#pinTag b { font-family: var(--hud); font-weight: 900; font-size: 15px; letter-spacing: .14em; color: #fff; padding: 4px 10px; border-radius: 8px; background: rgba(4,10,26,.78); border: 1px solid var(--c); box-shadow: 0 0 14px color-mix(in srgb, var(--c) 60%, transparent); text-shadow: 0 0 10px var(--c); white-space: nowrap; }
+#pinTag span { font-family: var(--hud); font-size: 9px; letter-spacing: .12em; color: var(--c); text-shadow: 0 0 6px #000; white-space: nowrap; }
+/* loading: a radar sweep */
+#loading { flex-direction: column; transition: opacity .7s; }
+#loading.out { opacity: 0; }
+.load-box { display: flex; flex-direction: column; align-items: center; padding: 0 24px; }
+.radar { position: relative; width: 150px; height: 150px; border-radius: 50%; margin-bottom: 22px; border: 1.5px solid rgba(95,243,255,.5); box-shadow: 0 0 30px rgba(95,243,255,.25), inset 0 0 30px rgba(95,243,255,.15);
+  background: radial-gradient(circle, transparent 0 32%, rgba(95,243,255,.25) 32.5% 33%, transparent 33.5% 65%, rgba(95,243,255,.25) 65.5% 66%, transparent 66.5%), linear-gradient(transparent 49.6%, rgba(95,243,255,.3) 50%, transparent 50.4%), linear-gradient(90deg, transparent 49.6%, rgba(95,243,255,.3) 50%, transparent 50.4%); overflow: hidden; }
+.radar i { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(95,243,255,.55), transparent 25%); animation: spinr 2.2s linear infinite; }
+.radar b { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px; border-radius: 50%; background: var(--cy); box-shadow: 0 0 10px var(--cy); }
+.radar em { position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; background: var(--pk); box-shadow: 0 0 10px var(--pk); transform: rotate(var(--a)) translateY(calc(var(--r) * -70px)); animation: blip 2.2s ease-out infinite; animation-delay: calc(var(--a) / 360deg * 2.2s); opacity: 0; }
+@keyframes blip { 0% { opacity: 1; } 70% { opacity: 0; } 100% { opacity: 0; } }
+.load-tip { margin-top: 18px; font-size: 13px; color: var(--dim); text-align: center; max-width: 300px; line-height: 1.5; }
+#loading { z-index: 40; background: radial-gradient(circle at 50% 40%, #12224a, #040814 70%) !important; }
+#hq.show .topbar, #hq.show .hq-bottom { animation: uiin .7s cubic-bezier(.2,1,.4,1) both; }
+#hq.show .hq-bottom { animation-delay: .1s; }
+@keyframes uiin { from { opacity: 0; transform: translateY(14px); } }
+#hq.show .topbar { animation-name: uiintop; }
+@keyframes uiintop { from { opacity: 0; transform: translateY(-14px); } }
+/* the mission report: the artifact turns in 3D above it, the stars pop in */
+#report.low { align-items: flex-end; background: linear-gradient(rgba(6,10,26,0) 30%, rgba(6,10,26,.85)); backdrop-filter: none; }
+body:not(.portrait) #report.low { align-items: center; justify-content: flex-end; padding-right: 6vw; background: linear-gradient(90deg, rgba(6,10,26,0) 30%, rgba(6,10,26,.8)); }
+.stars span { display: inline-block; animation: starpop .5s cubic-bezier(.2,1.8,.4,1) both; }
+@keyframes starpop { from { transform: scale(0) rotate(-90deg); opacity: 0; } }
+.report-box .kicker { animation: blink 1s steps(2) 3; }
+body.portrait #report.low { padding-top: 40vh; }
+body.portrait #report.low .report-box { max-height: 58vh; }
+body:not(.portrait) #report.low { justify-content: flex-end !important; align-items: center !important; padding-right: 7vw; }
+body:not(.portrait) #report.low .report-box { width: min(440px, 40vw); }
