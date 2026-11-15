@@ -59,7 +59,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: save.gfx !== 'low'
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15; renderer.outputColorSpace = THREE.SRGBColorSpace;
 const camera = new THREE.PerspectiveCamera(50, 1, .05, 400);
 // bloom: the neon, the holograms and the lasers glow (HIGH graphics; LOW renders straight, for slow phones)
-const BLOOM = save.gfx !== 'low';
+const BLOOM = false;   // (the user, 2026-11-15: no glow)
 let composer = null, renderPass = null, bloomPass = null;
 if (BLOOM) { composer = new EffectComposer(renderer); renderPass = new RenderPass(new THREE.Scene(), camera); composer.addPass(renderPass);
   bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), .35, .35, 1.0); composer.addPass(bloomPass); composer.addPass(new OutputPass()); }
@@ -79,8 +79,8 @@ const tryLoad = (url) => loader.loadAsync(url).catch(() => null);
 const A = {};
 async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
-    ['fox', 'models/foxino-spy.glb?v=2'], ['agent', 'models/foxino-agent.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=2'],
-    ['case', 'models/glass-case.glb?v=2'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
+    ['fox', 'models/foxino-spy.glb?v=2'], ['agent', 'models/foxino-agent.glb?v=2'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=3'],
+    ['case', 'models/glass-case.glb?v=2'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=2'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
     ['bot', 'models/bolt-bot.glb?v=2'], ['secam', 'models/security-camera.glb?v=2'], ['emitter', 'models/laser-emitter.glb?v=2'], ['vaultdoor', 'models/vault-door.glb?v=2'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=2'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=2`]),
   ];
@@ -92,7 +92,7 @@ function dress(root) {
   root.traverse((o) => {
     if (!o.isMesh) return; o.frustumCulled = !o.isSkinnedMesh;
     // "Glow" parts: full-bright in their own (vertex) colours, untouched by the lights; skinned meshes keep skinning
-    const glowOf = (m) => { const g = new THREE.MeshBasicMaterial({ color: m.color ? m.color.clone().multiplyScalar(BLOOM ? 1.4 : 1.25) : 0xffffff, vertexColors: !!m.vertexColors, toneMapped: false, map: m.map || null }); g.name = m.name; return g; };
+    const glowOf = (m) => { const g = new THREE.MeshBasicMaterial({ color: m.color ? m.color.clone().multiplyScalar(BLOOM ? 1.4 : 1) : 0xffffff, vertexColors: !!m.vertexColors, toneMapped: false, map: m.map || null }); g.name = m.name; return g; };
     if (Array.isArray(o.material)) o.material = o.material.map((m) => (m && /glow/i.test(m.name) ? glowOf(m) : m));
     else if (o.material && /glow/i.test(o.material.name)) o.material = glowOf(o.material);
     for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.isMeshStandardMaterial) m.envMapIntensity = .6;
@@ -104,6 +104,7 @@ const fitHeight = (root, h) => { root.updateMatrixWorld(true); const b = new THR
 
 // Foxino: the Blender spy (rigged, animated) or the stand-in (the low-poly football Foxino, no clips)
 function makeFoxino(withGun = true) {
+  if (A.agent) return makeAgent(true, withGun);   // (the user's agent model, with the Blender spy's moves)
   const src = A.fox || A.standin; const root = new THREE.Group();
   const inner = cloneSkinned(src.scene); dress(inner); fitHeight(inner, 1.4); root.add(inner);
   const mixer = new THREE.AnimationMixer(inner), clips = {}; for (const c of (A.fox ? A.fox.animations : [])) clips[c.name.toLowerCase()] = mixer.clipAction(c);
@@ -163,8 +164,46 @@ function agentFace(mesh) {
   mat.customProgramCacheKey = () => 'foxspy-agent-face';
   return U;
 }
-function makeAgent() {
-  const root = new THREE.Group(), inner = A.agent.scene; dress(inner); fitHeight(inner, 1.4); root.add(inner);
+// the old Blender spy's clips (idle, walk, run, sneak, aim, celebrate, jump) moved onto the agent's skeleton once, at load:
+// the body (hips, spine, neck, head, hands) copies each bone's turn from its rest pose; arms and legs aim the same way
+function agentClips(dst) {
+  if (A.agentClips) return A.agentClips; if (!A.fox) return (A.agentClips = []);
+  const V = THREE.Vector3, Q = THREE.Quaternion, src = cloneSkinned(A.fox.scene); fitHeight(src, 1.4);
+  const sb = {}, db = {}; src.traverse((o) => { if (o.isBone) sb[o.name.replace(/^mixamorig:?/, '')] = o; }); dst.traverse((o) => { if (o.isBone) db[o.name] = o; });
+  const MAP = [['Hips', 'Hips', 'd'], ['Spine', 'Spine02', 'd'], ['Spine1', 'Spine01', 'd'], ['Spine2', 'Spine', 'd'], ['Neck', 'neck', 'd'], ['Head', 'Head', 'd']];
+  for (const L of ['Left', 'Right']) MAP.push([L + 'Shoulder', L + 'Shoulder', 'a', L + 'Arm'], [L + 'Arm', L + 'Arm', 'a', L + 'ForeArm'], [L + 'ForeArm', L + 'ForeArm', 'a', L + 'Hand'], [L + 'Hand', L + 'Hand', 'd'],
+    [L + 'UpLeg', L + 'UpLeg', 'a', L + 'Leg'], [L + 'Leg', L + 'Leg', 'a', L + 'Foot'], [L + 'Foot', L + 'Foot', 'a', L + 'ToeBase']);
+  const map = MAP.filter(([a, b, , c]) => sb[a] && db[b] && (!c || (sb[c] && db[c])));
+  const dRest = {}; for (const k in db) dRest[k] = db[k].quaternion.clone(); const dHipPos = db.Hips.position.clone();
+  src.updateMatrixWorld(true); dst.updateMatrixWorld(true);
+  const sRestW = {}, dRestW = {}; for (const [a, b] of map) { sRestW[a] = sb[a].getWorldQuaternion(new Q()); dRestW[b] = db[b].getWorldQuaternion(new Q()); }
+  const sHip0 = sb.Hips.getWorldPosition(new V()), dHip0 = db.Hips.getWorldPosition(new V()), kh = dHip0.y / Math.max(.01, sHip0.y);
+  const v1 = new V(), v2 = new V(), v3 = new V(), q1 = new Q(), q2 = new Q(), mx = new THREE.AnimationMixer(src), out = [];
+  for (const clip of A.fox.animations) {
+    const act = mx.clipAction(clip); act.play(); const n = Math.max(2, Math.round(clip.duration * 30) + 1), times = [], rot = {}, hip = [];
+    for (const [, b] of map) rot[b] = [];
+    for (let f = 0; f < n; f++) {
+      const t = clip.duration * f / (n - 1); act.time = t; mx.update(0); src.updateMatrixWorld(true); times.push(t);
+      for (const k in db) db[k].quaternion.copy(dRest[k]); db.Hips.position.copy(dHipPos); dst.updateMatrixWorld(true);
+      v1.copy(sb.Hips.getWorldPosition(v3)).sub(sHip0).multiplyScalar(kh).add(dHip0); db.Hips.parent.worldToLocal(v1); db.Hips.position.copy(v1); hip.push(v1.x, v1.y, v1.z);
+      for (const [a, b, kind, c] of map) {
+        const S = sb[a], D = db[b]; D.updateWorldMatrix(true, true);
+        if (kind === 'd') q1.copy(S.getWorldQuaternion(q2)).multiply(q2.copy(sRestW[a]).invert()).multiply(dRestW[b]);
+        else { const sd = sb[c].getWorldPosition(v1).sub(S.getWorldPosition(v2)).normalize(), cur = db[c].getWorldPosition(v3).sub(D.getWorldPosition(v2)).normalize();
+          q1.setFromUnitVectors(cur, sd).multiply(D.getWorldQuaternion(q2)); }
+        D.quaternion.copy(D.parent.getWorldQuaternion(q2).invert().multiply(q1)); D.updateWorldMatrix(false, true);
+        rot[b].push(D.quaternion.x, D.quaternion.y, D.quaternion.z, D.quaternion.w);
+      }
+    }
+    act.stop(); mx.uncacheAction(clip);
+    const tracks = [new THREE.VectorKeyframeTrack('Hips.position', times, hip), ...map.map(([, b]) => new THREE.QuaternionKeyframeTrack(b + '.quaternion', times, rot[b]))];
+    out.push(new THREE.AnimationClip(clip.name, clip.duration, tracks));
+  }
+  for (const k in db) db[k].quaternion.copy(dRest[k]); db.Hips.position.copy(dHipPos);
+  return (A.agentClips = out);
+}
+function makeAgent(mission = false, withGun = false) {
+  const root = new THREE.Group(), inner = cloneSkinned(A.agent.scene); dress(inner); fitHeight(inner, 1.4); root.add(inner);
   const B = {}; let mesh = null; inner.traverse((o) => { if (o.isBone) B[o.name] = o; if (o.isSkinnedMesh) mesh = o; });
   const rest = {}; for (const k in B) rest[k] = B[k].quaternion.clone();
   const U = agentFace(mesh);
@@ -172,35 +211,54 @@ function makeAgent() {
   const st = { t: 0, yaw: 0, yawTo: 0, pitch: 0, pitchTo: 0, nextLook: 1.5, mouth: 0, mouthTo: 0, nextMouth: 2.5, blink: -1, nextBlink: 2, look: new THREE.Vector2(), lookTo: new THREE.Vector2(), nextGlance: 3, glance: 0 };
   const pose = (name, x, y, z) => { const b = B[name]; if (!b) return; e.set(x, y, z, 'YXZ'); b.quaternion.copy(rest[name]).multiply(q.setFromEuler(e)); };
   const head = new THREE.Vector3(), tgt = new THREE.Vector3(), hq = new THREE.Quaternion();
-  const fox = { root, inner, agent: true, hasClips: false, face: U, play() {}, st,
-    update(dt) {
-      const s = st; s.t += dt; const t = s.t;
-      // where he looks: a slow look round, right and left (and now and then a little up or down)
-      if ((s.nextLook -= dt) <= 0) { s.yawTo = s.yawTo > 0 ? rnd(-.55, -.15) : rnd(.15, .55); if (Math.random() < .3) s.yawTo = rnd(-.12, .12); s.pitchTo = rnd(-.05, .14); s.nextLook = rnd(2.2, 4.8); }
-      const k = 1 - Math.exp(-dt * 2.4); s.yaw += (s.yawTo - s.yaw) * k; s.pitch += (s.pitchTo - s.pitch) * k;
-      // breathing: about 18 breaths a minute, the chest lifts and the shoulders rise a little
-      const br = Math.sin(t * 2 * Math.PI / 3.4), br2 = Math.sin(t * 2 * Math.PI / 3.4 - .6);
-      pose('Hips', 0, Math.sin(t * .45) * .03, Math.sin(t * .3) * .012);
-      pose('Spine02', .015 * br, 0, 0); pose('Spine01', -.02 * br, s.yaw * .08, 0); pose('Spine', -.025 * br, s.yaw * .12, 0);
-      pose('neck', s.pitch * .4 + .01 * br2, s.yaw * .3, -s.yaw * .03); pose('Head', s.pitch * .6 - .012 * br2, s.yaw * .5, -s.yaw * .06 + Math.sin(t * .7) * .02);
-      pose('LeftArm', 0, 0, -.02 * br2); pose('RightArm', 0, 0, .02 * br2); pose('LeftForeArm', .03 * br2, 0, 0); pose('RightForeArm', .03 * br2, 0, 0);
+  // in the missions he moves with the retargeted clips
+  const mixer = new THREE.AnimationMixer(inner), clips = {}; if (mission) for (const c of agentClips(inner)) clips[c.name.toLowerCase()] = mixer.clipAction(c);
+  let cur = null;
+  const fox = { root, inner, mixer, agent: true, hasClips: Object.keys(clips).length > 0, face: U, st, t: 0,
+    play(name, fade = .25) { const a = clips[name.toLowerCase()] || clips.idle; if (!a || a === cur) return; a.reset().fadeIn(fade).play(); if (cur) cur.fadeOut(fade); cur = a; },
+    update(dt, moving = false, speed = 0) {
+      const s = st; s.t += dt; fox.t = s.t; const t = s.t;
+      if (mission) { mixer.update(dt); if (!fox.manual) fox.play(moving ? (speed > 3 ? 'run' : 'walk') : 'idle'); }
+      else {
+        // where he looks: a slow look round, right and left (and now and then a little up or down)
+        if ((s.nextLook -= dt) <= 0) { s.yawTo = s.yawTo > 0 ? rnd(-.55, -.15) : rnd(.15, .55); if (Math.random() < .3) s.yawTo = rnd(-.12, .12); s.pitchTo = rnd(-.05, .14); s.nextLook = rnd(2.2, 4.8); }
+        const k = 1 - Math.exp(-dt * 2.4); s.yaw += (s.yawTo - s.yaw) * k; s.pitch += (s.pitchTo - s.pitch) * k;
+        // breathing: about 18 breaths a minute, the chest lifts and the shoulders rise a little
+        const br = Math.sin(t * 2 * Math.PI / 3.4), br2 = Math.sin(t * 2 * Math.PI / 3.4 - .6);
+        pose('Hips', 0, Math.sin(t * .45) * .03, Math.sin(t * .3) * .012);
+        pose('Spine02', .015 * br, 0, 0); pose('Spine01', -.02 * br, s.yaw * .08, 0); pose('Spine', -.025 * br, s.yaw * .12, 0);
+        pose('neck', s.pitch * .4 + .01 * br2, s.yaw * .3, -s.yaw * .03); pose('Head', s.pitch * .6 - .012 * br2, s.yaw * .5, -s.yaw * .06 + Math.sin(t * .7) * .02);
+        pose('LeftArm', 0, 0, -.02 * br2); pose('RightArm', 0, 0, .02 * br2); pose('LeftForeArm', .03 * br2, 0, 0); pose('RightForeArm', .03 * br2, 0, 0);
+      }
       // the mouth: his grin for a while, then closed for a while
       if ((s.nextMouth -= dt) <= 0) { s.mouthTo = s.mouthTo ? 0 : 1; s.nextMouth = s.mouthTo ? rnd(2, 5) : rnd(1.6, 4); }
       s.mouth += (s.mouthTo - s.mouth) * (1 - Math.exp(-dt * 14)); U.uClosed.value = s.mouth;
       // blinks (now and then a double one)
       if (s.blink < 0 && (s.nextBlink -= dt) <= 0) { s.blink = 0; s.nextBlink = Math.random() < .2 ? .35 : rnd(2.2, 5.5); }
       if (s.blink >= 0) { s.blink += dt / .17; U.uBlink.value = Math.sin(Math.min(1, s.blink) * Math.PI); if (s.blink >= 1) { s.blink = -1; U.uBlink.value = 0; } }
-      // the eyes: on the menu buttons (SELECT MISSION), now and then a glance at us
-      if ((s.nextGlance -= dt) <= 0) { s.glance = s.glance ? 0 : 1; s.nextGlance = s.glance ? rnd(.8, 1.6) : rnd(3, 6); }
-      const btn = document.getElementById('btnSelect'), H = B.Head;
-      if (H) { H.getWorldPosition(head);
-        if (btn && !s.glance) { const r = btn.getBoundingClientRect(); tgt.set((r.left + r.width / 2) / innerWidth * 2 - 1, -((r.top + r.height / 2) / innerHeight * 2 - 1), .5).unproject(camera);
-          tgt.sub(camera.position).normalize().multiplyScalar(head.distanceTo(camera.position) * .8).add(camera.position); }
-        else tgt.copy(camera.position);
-        tgt.sub(head); H.getWorldQuaternion(hq); tgt.applyQuaternion(hq.invert()).normalize();   // (in the head's own frame: +Z his front, +X his left)
-        s.lookTo.set(THREE.MathUtils.clamp(tgt.x / Math.max(.2, tgt.z) * 1.6, -1, 1), THREE.MathUtils.clamp(tgt.y / Math.max(.2, tgt.z) * 1.8, -1, 1)); }
+      if (mission) { if ((s.nextGlance -= dt) <= 0) { s.lookTo.set(rnd(-.35, .35), rnd(-.25, .2)); s.nextGlance = rnd(.8, 2.4); } }   // (on a mission: little looks about)
+      else {
+        // the eyes: on the menu buttons (SELECT MISSION), now and then a glance at us
+        if ((s.nextGlance -= dt) <= 0) { s.glance = s.glance ? 0 : 1; s.nextGlance = s.glance ? rnd(.8, 1.6) : rnd(3, 6); }
+        const btn = document.getElementById('btnSelect'), H = B.Head;
+        if (H) { H.getWorldPosition(head);
+          if (btn && !s.glance) { const r = btn.getBoundingClientRect(); tgt.set((r.left + r.width / 2) / innerWidth * 2 - 1, -((r.top + r.height / 2) / innerHeight * 2 - 1), .5).unproject(camera);
+            tgt.sub(camera.position).normalize().multiplyScalar(head.distanceTo(camera.position) * .8).add(camera.position); }
+          else tgt.copy(camera.position);
+          tgt.sub(head); H.getWorldQuaternion(hq); tgt.applyQuaternion(hq.invert()).normalize();   // (in the head's own frame: +Z his front, +X his left)
+          s.lookTo.set(THREE.MathUtils.clamp(tgt.x / Math.max(.2, tgt.z) * 1.6, -1, 1), THREE.MathUtils.clamp(tgt.y / Math.max(.2, tgt.z) * 1.8, -1, 1)); }
+      }
       s.look.lerp(s.lookTo, 1 - Math.exp(-dt * 16)); U.uLook.value.copy(s.look);
     } };
+  // the stun gun in his right hand, barrel along the hand (his bones are not turned like the Blender spy's, so it is aimed here)
+  if (withGun && A.gun && B.RightHand && B.RightForeArm) {
+    inner.updateMatrixWorld(true); const hand = B.RightHand, V = THREE.Vector3;
+    const d = hand.getWorldPosition(new V()).sub(B.RightForeArm.getWorldPosition(new V())).applyQuaternion(hand.getWorldQuaternion(new THREE.Quaternion()).invert()).normalize();
+    if (A.gunRef == null) { const o = cloneSkinned(A.fox ? A.fox.scene : A.agent.scene); fitHeight(o, 1.4); o.updateMatrixWorld(true); const h = findBone(o, /RightHand$/); A.gunRef = h ? h.getWorldScale(new V()).x : 1; }
+    const ks = A.gunRef / hand.getWorldScale(new V()).x, g = dress(A.gun.scene.clone());
+    g.quaternion.setFromUnitVectors(new V(0, 0, 1), d); g.scale.multiplyScalar(ks); g.position.copy(d).multiplyScalar(.06 * ks); hand.add(g); fox.gun = g;
+  }
+  if (mission) fox.play('idle', 0);
   return fox;
 }
 const GUN_ROT = [-Math.PI / 2, 0, 0], GUN_POS = [0, .06, .02];   // the stun gun in the right hand: its barrel (+Z) along the hand bone (+Y)
@@ -216,8 +274,8 @@ function cloneSkinned(src) {
 /* ================= little shared visuals ================= */
 function glowTex(c1 = '255,255,255') { const cv = document.createElement('canvas'); cv.width = cv.height = 128; const g = cv.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64); gr.addColorStop(0, `rgba(${c1},1)`); gr.addColorStop(.25, `rgba(${c1},.6)`); gr.addColorStop(1, `rgba(${c1},0)`); g.fillStyle = gr; g.fillRect(0, 0, 128, 128); const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t; }
 const GLOW = glowTex();
-const glowSprite = (color, size) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); s.scale.setScalar(size); return s; };
-const blobShadow = (r = .5) => { const m = new THREE.Mesh(new THREE.CircleGeometry(r, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: .35, depthWrite: false })); m.position.y = .02; return m; };
+const glowSprite = (color, size) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); s.scale.setScalar(size); s.layers.set(31); return s; };   // (no glow: on a layer the camera never draws)
+const blobShadow = (r = .5) => { const m = new THREE.Mesh(new THREE.CircleGeometry(r, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: .35, depthWrite: false })); m.position.y = .02; m.layers.set(31); return m; };   // (no shadows: never drawn)
 const neon = (c) => new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(BLOOM ? 1.25 : 1), toneMapped: false });   // (over 1: the bloom picks it up)
 function textSprite(text, color = '#5ff3ff', h = .22) {
   const cv = document.createElement('canvas'), g = cv.getContext('2d'); g.font = '700 64px Orbitron, Arial'; const w = Math.ceil(g.measureText(text).width) + 40; cv.width = w; cv.height = 96;
@@ -418,10 +476,11 @@ function placeHQFox() {
   HQ.fox.root.position.copy(f); if (ag) HQ.fox.root.position.y = HQ_AGENT.y; HQ.fox.root.scale.setScalar(HQ_FOX.s); HQ.fox.root.rotation.y = HQ_FOX.turn; HQ.foxShadow.position.set(f.x, .02, f.z);
 }
 // mission select: the camera looks down at the map from the front, centred on HQ.focus (drag to move it, tap a pin to fly there)
-function mapBaseDist() { return PORTRAIT() ? fitDist(1.6, 1.2) : fitDist(HQ.mapW * .82, HQ.mapD * 1.5); }
+const MAPV = { h: 1.15, dz: 0 };   // 9:16: the map's depth fills the screen height (between the header and the hint), sitting a bit lower
+function mapBaseDist() { return PORTRAIT() ? fitDist(.4, HQ.mapD * MAPV.h) : fitDist(HQ.mapW * .82, HQ.mapD * 1.5); }
 function mapView(f, zoom) {
   const P = PORTRAIT(), d = mapBaseDist() * zoom, pitch = P ? 1.3 : 1.15, dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
-  const l = f.clone(); if (P) l.z += d * .13; else l.x += d * .14;   // (tall screens: the map in the top half, over the card; wide: the map left of the card)
+  const l = f.clone(); if (P) l.z += d * MAPV.dz; else l.x += d * .14;   // (tall screens: the map in the top half, over the card; wide: the map left of the card)
   return { p: l.clone().addScaledVector(dir, d), l };
 }
 function computeViews() {
@@ -1276,5 +1335,5 @@ function frame(now) {
 }
 (async () => {
   await loadAssets(); buildHQ(); window.__hqReady = true; mode = 'hq'; $('loading').classList.add('out'); setTimeout(() => $('loading').classList.remove('show', 'out'), 700); document.body.classList.toggle('portrait', PORTRAIT()); document.body.dataset.view = 'center'; setTimeout(() => showScreen('hq'), 1400); updateHQText(); requestAnimationFrame(frame);
-  window.FS = { hackSession, HQ_FOX, HQ_AGENT, placeHQFox, computeViews, THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
+  window.FS = { renderer, makeFoxino, MAPV, hackSession, HQ_FOX, HQ_AGENT, placeHQFox, computeViews, THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
 })();
