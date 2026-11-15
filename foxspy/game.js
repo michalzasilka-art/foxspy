@@ -79,7 +79,7 @@ const A = {};
 async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
     ['fox', 'models/foxino-spy.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=1'],
-    ['case', 'models/glass-case.glb?v=1'], ['globe', 'models/globe.glb?v=1'],
+    ['case', 'models/glass-case.glb?v=1'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'],
     ['bot', 'models/bolt-bot.glb?v=1'], ['secam', 'models/security-camera.glb?v=1'], ['emitter', 'models/laser-emitter.glb?v=1'], ['vaultdoor', 'models/vault-door.glb?v=1'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=1'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=1`]),
   ];
@@ -275,7 +275,7 @@ function buildHQ() {
   const vio = new THREE.PointLight('#b57bff', 30, 18, 1.6); vio.position.set(-5, 3, 1); S.add(vio);
   const warm = new THREE.PointLight('#ffd9a8', 20, 14, 1.6); warm.position.set(2, 3, 4); S.add(warm);
   const pnk = new THREE.PointLight('#ff6ec7', 22, 14, 1.6); pnk.position.set(5, 3, -1); S.add(pnk);
-  HQ.lights = [hemi, key, vio, warm, pnk].map((l) => ({ l, i: l.intensity })); HQ.dim = 0;
+  HQ.lights = [hemi, key, vio, warm, pnk].map((l) => ({ l, i: l.intensity })); HQ.dim = 0; HQ.glowDim = [];
   let screen = null;
   if (A.room) {
     const room = dress(A.room.scene); S.add(room);
@@ -303,6 +303,8 @@ function buildHQ() {
   });
   refreshTrophies();
   // where things are: the projector table (the globe floats above it), the board, the trophy gallery
+  // the table's own glow strips dim with the room in mission select
+  HQ.table.traverse((o) => { if (!o.isMesh) return; o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone(); (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.color) HQ.glowDim.push({ m, c: m.color.clone() }); }); });
   const tb = new THREE.Box3().setFromObject(HQ.table);
   HQ.gc = new THREE.Vector3((tb.min.x + tb.max.x) / 2, tb.max.y + .92, (tb.min.z + tb.max.z) / 2);
   HQ.tableTop = tb.max.y;
@@ -322,22 +324,27 @@ function buildHQ() {
 // the cameras for each view, fitted to the screen: what must be on screen is given as a width (and a height) at a distance
 function fitDist(w, h) { const vt = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), ht = vt * camera.aspect; return Math.max(w / 2 / ht, h / 2 / vt); }
 // where Foxino stands: behind the projector table, looking up at the hologram; we look at him through it
-const HQ_FOX = { x: -.9, z: -1.95, s: 1.5, turn: 0, tilt: .3, clip: 'idle' };   // (behind the hologram, looking up at it)
+const HQ_FOX = { x: .15, z: -1.3, s: 1.35, turn: 0, tilt: -.45, clip: 'idle' };   // (behind the table map, looking down at it)
 function placeHQFox() {
   const g = HQ.gc, f = HQ.FOX_AT = new THREE.Vector3(g.x + HQ_FOX.x, 0, g.z + HQ_FOX.z);
-  HQ.fox.root.position.copy(f); HQ.fox.root.scale.setScalar(HQ_FOX.s); HQ.fox.root.rotation.y = Math.atan2(g.x - f.x, g.z - f.z) + HQ_FOX.turn; HQ.foxShadow.position.set(f.x, .02, f.z);
+  HQ.fox.root.position.copy(f); HQ.fox.root.scale.setScalar(HQ_FOX.s); HQ.fox.root.rotation.y = HQ_FOX.turn; HQ.foxShadow.position.set(f.x, .02, f.z);
+}
+// mission select: the camera looks down at the map from the front, centred on HQ.focus (drag to move it, tap a pin to fly there)
+function mapBaseDist() { return PORTRAIT() ? fitDist(1.6, 1.2) : fitDist(HQ.mapW * .82, HQ.mapD * 1.5); }
+function mapView(f, zoom) {
+  const P = PORTRAIT(), d = mapBaseDist() * zoom, pitch = P ? 1.3 : 1.15, dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
+  const l = f.clone(); if (P) l.z += d * .2; else l.x += d * .14;   // (tall screens: the map in the top half, over the card; wide: the map left of the card)
+  return { p: l.clone().addScaledVector(dir, d), l };
 }
 function computeViews() {
   if (HQ.fox) placeHQFox();
   const g = HQ.gc, P = PORTRAIT(), f = HQ.FOX_AT;
   // centre: Foxino and the hologram together (on a tall screen the camera comes round so they stack up the screen)
-  const dC = P ? fitDist(2.6, 3.9) : fitDist(5.4, 3.3);
-  const center = P ? { p: new THREE.Vector3(g.x + .1, 1.5, g.z + dC), l: new THREE.Vector3(g.x, 1.38, g.z - .4) }
-    : { p: new THREE.Vector3(g.x + .25, 1.6, g.z + dC), l: new THREE.Vector3(g.x, 1.42, g.z - .4) };
+  const dC = P ? fitDist(2.1, 3.2) : fitDist(4.6, 2.8);
+  const center = P ? { p: new THREE.Vector3(g.x + .05, 1.95, g.z + 3.0 * clamp(.5 / camera.aspect, .85, 1.3)), l: new THREE.Vector3(g.x, 1.45, g.z - .5) }
+    : { p: new THREE.Vector3(g.x + .2, 2.25, g.z + dC), l: new THREE.Vector3(g.x, 1.4, g.z - .35) };
   // the globe close-up: the globe in the top half (tall screens: above the mission card) or on the left (wide screens: card on the right)
-  const dG = P ? fitDist(1.75, 1.75) * 1.62 : fitDist(4.2, 2.9);
-  const globe = P ? { p: new THREE.Vector3(g.x, g.y + .32, g.z + dG), l: new THREE.Vector3(g.x, g.y - .42, g.z) }
-    : { p: new THREE.Vector3(g.x + .35, g.y + .15, g.z + dG), l: new THREE.Vector3(g.x + .78, g.y - .05, g.z) };
+  const globe = mapView(HQ.focus || HQ.mapC, HQ.zoom || 1);
   // trophy gallery: all five cases; stats board: the whole board (wide screens) or its middle (the panel shows the numbers)
   const pc = HQ.pc, dir = new THREE.Vector3(HQ.gc.x - pc.x, 0, HQ.gc.z - pc.z).normalize(), dL = fitDist(HQ.pspan * (P ? .92 : 1.02), 2.2);
   const left = { p: pc.clone().addScaledVector(dir, dL).setY(P ? 2.4 : 1.75), l: pc.clone().setY(P ? 1.0 : 1.15) };
@@ -394,50 +401,116 @@ const flowMat = (color) => new THREE.ShaderMaterial({ transparent: true, depthWr
   vertexShader: `attribute float aT; varying float vT; void main(){ vT = aT; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `uniform vec3 uColor; uniform float uTime; varying float vT; void main(){ float d = fract(vT * 14.0 - uTime * 0.8); float a = smoothstep(0.0, 0.15, d) * (1.0 - smoothstep(0.55, 0.7, d)); float edge = smoothstep(0.0, 0.06, vT) * (1.0 - smoothstep(0.94, 1.0, vT)); gl_FragColor = vec4(uColor * (0.5 + a * 1.6), (0.25 + a) * edge); }` });
 const llDir = (lat, lon) => { const la = THREE.MathUtils.degToRad(lat), lo = THREE.MathUtils.degToRad(lon); return new THREE.Vector3(Math.cos(la) * Math.sin(lo), Math.sin(la), Math.cos(la) * Math.cos(lo)); };
+// THE TABLE MAP: a flat 3D world hologram over the projector table (mission select). Blender's holo-map.glb when it is
+// there (Land / Ocean / Grid / Frame / Landmark_<mission>); until then the globe's land is unrolled flat (equirectangular).
+// Map units: x = lon / 45, z = -lat / 45 (latitudes -58…84), scaled by MAP.s metres per unit.
+const MAP = { s: .4, lat0: -58, lat1: 84 };
+const mapLocal = (lat, lon, y = 0) => new THREE.Vector3(lon / 45, y, -lat / 45);
+function mapPos(lat, lon, y = 0) { return HQ.mapG.localToWorld(mapLocal(lat, lon, y)); }
+const landMat = () => new THREE.ShaderMaterial({ vertexColors: true, transparent: true, toneMapped: false, extensions: { derivatives: true },
+  uniforms: { uTime: { value: 0 }, uScan: { value: 0 }, uB: { value: 1 } },
+  vertexShader: `varying vec3 vC, vW; varying float vH; void main(){ vC = color; vH = position.y; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `uniform float uTime, uScan, uB; varying vec3 vC, vW; varying float vH;
+    void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -n;
+      float dif = clamp(dot(n, normalize(vec3(-.35, 1.0, .45))), 0.0, 1.0), rim = pow(1.0 - n.y, 2.0);
+      vec3 c = vC * (.32 + .85 * dif) * uB;
+      float cl = smoothstep(.9, 1.0, fract(vH * 26.0)) * step(.05, vH) * .22;            // contour lines on the mountains
+      float sw = exp(-pow((vW.x - uScan) * 7.0, 2.0));                                    // the scan sweep
+      c += vec3(.37, .95, 1.0) * (cl + sw * .55 + rim * .35);
+      gl_FragColor = vec4(c, .95); }` });
+const oceanMat = (vc) => new THREE.ShaderMaterial({ vertexColors: vc, transparent: true, depthWrite: false, toneMapped: false,
+  uniforms: { uTime: { value: 0 }, uScan: { value: 0 } },
+  vertexShader: `varying vec3 vL, vW, vC; void main(){ vL = position; ${vc ? 'vC = color;' : 'vC = vec3(1.0);'} vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `uniform float uTime, uScan; varying vec3 vL, vW, vC;
+    float line(float v, float w){ float f = abs(fract(v) - .5); return smoothstep(.5 - w, .5, f); }
+    void main(){ vec2 g = vL.xz * 3.0;                                                    // every 15 degrees
+      float maj = max(line(g.x + .5, .035), line(g.y + .5, .035)), mi = max(line(g.x * 3.0 + .5, .05), line(g.y * 3.0 + .5, .05)) * .35;
+      float wv = .5 + .5 * sin(vL.x * 9.0 - uTime * 1.2 + sin(vL.z * 7.0 + uTime) * 1.5);
+      float sw = exp(-pow((vW.x - uScan) * 5.0, 2.0));
+      vec3 base = vec3(.012, .07, .17) * (vC * 1.2) + vec3(.02, .1, .2) * wv * .35;
+      vec3 c = base + vec3(.3, .85, 1.0) * (maj * .5 + mi * .3 + sw * .35);
+      gl_FragColor = vec4(c, .96); }` });
+function flatLandFromGlobe() {
+  // the Blender globe's land, unrolled: every triangle to longitude/latitude (triangles across the date line are left out)
+  const g = new THREE.BufferGeometry(), P = [], C = [];
+  A.globe.scene.traverse((o) => { if (!o.isMesh || !/land/i.test(o.name)) return;
+    const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry, pa = geo.attributes.position, ca = geo.attributes.color, v = new THREE.Vector3();
+    for (let i = 0; i < pa.count; i += 3) { const tri = [];
+      for (let k = 0; k < 3; k++) { v.fromBufferAttribute(pa, i + k); const r = v.length(), lat = THREE.MathUtils.radToDeg(Math.asin(v.y / r)), lon = THREE.MathUtils.radToDeg(Math.atan2(v.x, v.z)); tri.push([lat, lon, r]); }
+      const lons = tri.map((q) => q[1]); if (Math.max(...lons) - Math.min(...lons) > 90) continue;
+      if (tri.some((q) => q[0] < MAP.lat0 || q[0] > MAP.lat1)) continue;
+      for (let k = 0; k < 3; k++) { const [lat, lon, r] = tri[k]; P.push(lon / 45, .025 + Math.max(0, r - 1) * 6, -lat / 45); if (ca) C.push(ca.getX(i + k), ca.getY(i + k), ca.getZ(i + k)); else C.push(.2, .7, .5); } } });
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); return g;
+}
 function buildGlobe() {
-  const G = new THREE.Group(); G.position.copy(HQ.gc); HQ.scene.add(G); HQ.globe = G; const R = .68; HQ.R = R;
-  const spin = new THREE.Group(); spin.rotation.order = 'XYZ'; spin.rotation.x = .3; G.add(spin); HQ.spin = spin; const M = (m) => (HQ.mats.push(m), m);
-  if (A.globe) A.globe.scene.traverse((o) => { if (!o.isMesh) return; const land = /land/i.test(o.name);
-    const m = new THREE.Mesh(o.geometry, land ? M(holoMat('#7af8ff', .95, 0, !!o.geometry.attributes.color)) : M(holoMat('#2a7cff', .38, 1))); m.scale.setScalar(R * (land ? 1.004 : 1)); spin.add(m); });
-  else spin.add(new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32), M(holoMat('#3a9cff', .45, 1))));
-  spin.add(new THREE.Mesh(new THREE.SphereGeometry(R * .985, 40, 28), new THREE.MeshBasicMaterial({ color: '#051a38', transparent: true, opacity: .5, depthWrite: false })));
-  const atmo = new THREE.Mesh(new THREE.SphereGeometry(R * 1.18, 48, 32), atmoMat('#3fb8ff')); G.add(atmo);
-  // the light beam from the projector up to the globe, and a glowing disc on the table
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(R * .95, .95, HQ.gc.y - HQ.tableTop - R * .2, 48, 1, true), M(holoMat('#5ff3ff', .16))); beam.position.y = -(HQ.gc.y - HQ.tableTop) / 2 - R * .1; G.add(beam);
-  const disc = glowSprite('#5ff3ff', 1.9); disc.position.y = -(HQ.gc.y - HQ.tableTop) + .02; disc.material.opacity = .55; G.add(disc);
-  // a scanning ring that sweeps up and down the globe, and two tilted orbits with satellites
-  const scanRing = new THREE.Mesh(new THREE.TorusGeometry(R * 1.02, .005, 6, 120).rotateX(Math.PI / 2), neon('#9ff3ff')); G.add(scanRing);
-  const orbits = [[1.32, .45, .2, '#b57bff'], [1.46, -.35, -.15, '#5ff3ff']].map(([r, tx, tz, c]) => {
-    const o = new THREE.Group(); o.rotation.set(tx, 0, tz); G.add(o);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(R * r, .0035, 6, 160), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: .55, toneMapped: false })); ring.rotation.x = Math.PI / 2; o.add(ring);
-    const sat = glowSprite(c, .14); o.add(sat); return { o, sat, r: R * r, sp: rand(.25, .45) * (Math.random() < .5 ? -1 : 1), a: rand(0, 6) }; });
-  // routes: arcs from mission to mission over the globe, with dashes flowing along them
+  const S = HQ.scene, M = (m) => (HQ.mats.push(m), m);
+  // the map floats a little over the table, centred on it
+  const G = new THREE.Group(); G.position.set(HQ.gc.x, HQ.tableTop + .16, HQ.gc.z); G.scale.setScalar(MAP.s); S.add(G); HQ.mapG = G;
+  const zc = -(MAP.lat0 + MAP.lat1) / 2 / 45; G.position.z = HQ.gc.z - zc * MAP.s; G.updateMatrixWorld(true);   // (the middle latitude over the table's middle)
+  const W = 8, D = (MAP.lat1 - MAP.lat0) / 45, z0 = -MAP.lat1 / 45, z1 = -MAP.lat0 / 45;
+  HQ.mapBox = new THREE.Box3(G.localToWorld(new THREE.Vector3(-4, -.1, z0)), G.localToWorld(new THREE.Vector3(4, .6, z1)));
+  HQ.mapC = HQ.mapBox.getCenter(new THREE.Vector3()).setY(G.position.y); HQ.mapW = W * MAP.s; HQ.mapD = D * MAP.s;
+  HQ.landMats = []; let landDone = false, oceanDone = false;
+  if (A.map) A.map.scene.traverse((o) => { if (!o.isMesh) return; const n = o.name.toLowerCase(), m = o.clone(); m.geometry = o.geometry; m.applyMatrix4(o.parent && o.parent !== A.map.scene ? o.parent.matrixWorld : new THREE.Matrix4());
+      if (/^land/.test(n)) { m.material = M(landMat()); HQ.landMats.push(m.material); landDone = true; }
+      else if (/^ocean/.test(n)) { m.material = M(oceanMat(!!o.geometry.attributes.color)); oceanDone = true; }
+      else if (/^grid/.test(n)) { m.material = new THREE.MeshBasicMaterial({ color: '#5ff3ff', transparent: true, opacity: .35, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }); }
+      else if (/^landmark_/.test(n)) return;   // (the landmarks go with their pins)
+      else { const d = dress(o.clone()); G.add(d); return; }
+      G.add(m); });
+  if (!landDone && A.globe) { const m = new THREE.Mesh(flatLandFromGlobe(), M(landMat())); HQ.landMats.push(m.material); G.add(m); }
+  if (!oceanDone) { const o = new THREE.Mesh(new THREE.PlaneGeometry(W, D, 1, 1).rotateX(-Math.PI / 2).translate(0, 0, (z0 + z1) / 2), M(oceanMat(false))); G.add(o); }
+  // stand-in frame (until the Blender map brings its own): a glowing edge with corner brackets and tick marks
+  if (!A.map) { const pts = [], edge = (a, b) => pts.push(a, b), y = .01, x0 = -4.06, x1 = 4.06, za = z0 - .06, zb = z1 + .06;
+    edge(new THREE.Vector3(x0, y, za), new THREE.Vector3(x1, y, za)); edge(new THREE.Vector3(x1, y, za), new THREE.Vector3(x1, y, zb)); edge(new THREE.Vector3(x1, y, zb), new THREE.Vector3(x0, y, zb)); edge(new THREE.Vector3(x0, y, zb), new THREE.Vector3(x0, y, za));
+    for (let lon = -180; lon <= 180; lon += 15) { const x = lon / 45, L = lon % 45 === 0 ? .1 : .05; edge(new THREE.Vector3(x, y, za), new THREE.Vector3(x, y, za - L)); edge(new THREE.Vector3(x, y, zb), new THREE.Vector3(x, y, zb + L)); }
+    for (let lat = -45; lat <= 75; lat += 15) { const z = -lat / 45, L = lat % 45 === 0 ? .1 : .05; edge(new THREE.Vector3(x0, y, z), new THREE.Vector3(x0 - L, y, z)); edge(new THREE.Vector3(x1, y, z), new THREE.Vector3(x1 + L, y, z)); }
+    G.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: '#5ff3ff', transparent: true, opacity: .8, toneMapped: false })));
+    for (const [cx, cz, sx, sz] of [[x0, za, 1, 1], [x1, za, -1, 1], [x1, zb, -1, -1], [x0, zb, 1, -1]]) { const b = new THREE.Mesh(new THREE.BoxGeometry(.5, .05, .05).translate(.25, 0, 0), neon('#9ff8ff')), c = new THREE.Mesh(new THREE.BoxGeometry(.05, .05, .5).translate(0, 0, .25), neon('#9ff8ff')); b.scale.x = sx; c.scale.z = sz; b.position.set(cx, .03, cz); c.position.set(cx, .03, cz); G.add(b, c); } }
+  // the projector light: from the table's disc up to the map, and a glow under it
+  { const t = HQ.tableTop + .02, top = G.position.y - .01, r = .85, hw = HQ.mapW / 2 * .98, hd = HQ.mapD / 2 * .98, cx = HQ.mapC.x, cz = HQ.mapC.z, P = [];
+    const bot = [[-r, -r], [r, -r], [r, r], [-r, r]].map(([x, z]) => [HQ.gc.x + x * .7, t, HQ.gc.z + z * .7]), tp = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([x, z]) => [cx + x, top, cz + z]);
+    for (let k = 1; k < 4; k++) { const a = bot[k], b = bot[(k + 1) % 4], c = tp[(k + 1) % 4], d = tp[k]; P.push(...a, ...b, ...c, ...a, ...c, ...d); }   // (no back wall: it would veil Foxino)
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.computeVertexNormals();
+    const vol = new THREE.Mesh(geo, M(holoMat('#5ff3ff', .06))); S.add(vol); HQ.mapVol = vol;
+    const disc = glowSprite('#5ff3ff', 1.5); disc.position.set(HQ.gc.x, t + .03, HQ.gc.z + .3); disc.material.opacity = .35; S.add(disc); HQ.mapDisc = disc;
+    const under = new THREE.Mesh(new THREE.PlaneGeometry(HQ.mapW * 1.1, HQ.mapD * 1.25).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: GLOW, color: '#2a9cff', transparent: true, opacity: .35, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); under.position.set(cx, top - .02, cz); S.add(under); }
+  // routes: arcs from mission to mission over the map, with dashes flowing along them and a data packet riding each
+  HQ.packets = [];
   for (let k = 0; k < MISSIONS.length - 1; k++) {
-    const a = llDir(MISSIONS[k].lat, MISSIONS[k].lon), b = llDir(MISSIONS[k + 1].lat, MISSIONS[k + 1].lon), pts = [], ts = [], n = 64, ang = a.angleTo(b);
-    for (let i = 0; i <= n; i++) { const t = i / n, v = a.clone().lerp(b, t).normalize(); pts.push(v.multiplyScalar(R * (1.01 + Math.sin(t * Math.PI) * (.12 + ang * .08)))); ts.push(t); }
-    const curve = new THREE.CatmullRomCurve3(pts), geo = new THREE.TubeGeometry(curve, 96, .0045, 6, false);
-    const tAttr = []; const pos = geo.attributes.position; for (let i = 0; i < pos.count; i++) tAttr.push(Math.floor(i / 7) / 96); geo.setAttribute('aT', new THREE.Float32BufferAttribute(tAttr, 1));
-    spin.add(new THREE.Mesh(geo, M(flowMat(MISSIONS[k + 1].color))));
+    const a = mapPos(MISSIONS[k].lat, MISSIONS[k].lon), b = mapPos(MISSIONS[k + 1].lat, MISSIONS[k + 1].lon), h = .12 + a.distanceTo(b) * .18, pts = [];
+    for (let i = 0; i <= 40; i++) { const t = i / 40; pts.push(a.clone().lerp(b, t).add(new THREE.Vector3(0, Math.sin(t * Math.PI) * h + .02, 0))); }
+    const curve = new THREE.CatmullRomCurve3(pts), geo = new THREE.TubeGeometry(curve, 96, .004, 6, false);
+    const tAttr = []; for (let i = 0; i < geo.attributes.position.count; i++) tAttr.push(Math.floor(i / 7) / 96); geo.setAttribute('aT', new THREE.Float32BufferAttribute(tAttr, 1));
+    S.add(new THREE.Mesh(geo, M(flowMat(MISSIONS[k + 1].color))));
+    const pk = glowSprite(MISSIONS[k + 1].color, .1); S.add(pk); HQ.packets.push({ curve, pk, t: Math.random(), sp: rand(.12, .2) });
   }
-  // the mission pins: a beacon of light, a pulsing ring, a bright head, its number; won missions get a gold star
+  // drifting holo clouds over the map
+  HQ.clouds = Array.from({ length: 7 }, () => { const c = glowSprite('#bfefff', rand(.35, .6)); c.material.opacity = .08; c.position.set(HQ.mapC.x + rand(-1.5, 1.5), G.position.y + rand(.18, .3), HQ.mapC.z + rand(-.5, .5)); c.userData.v = rand(.03, .06); S.add(c); return c; });
+  // the mission pins: the Blender landmark (or a stand-in tower), a beam of light, pulsing rings on the map, a glowing head and its number
   MISSIONS.forEach((m) => {
-    const dir = llDir(m.lat, m.lon), col = new THREE.Color(m.color);
-    const pin = new THREE.Group(); pin.position.copy(dir).multiplyScalar(R * 1.005); pin.lookAt(dir.clone().multiplyScalar(5)); spin.add(pin);
-    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(.006, .02, .22, 12, 1, true).rotateX(Math.PI / 2).translate(0, 0, .11), M(holoMat(m.color, .9))); pin.add(beacon);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(.028, .036, 40), new THREE.MeshBasicMaterial({ color: col, transparent: true, side: THREE.DoubleSide, toneMapped: false, depthWrite: false })); pin.add(ring);
+    const base = mapPos(m.lat, m.lon), col = new THREE.Color(m.color), pin = new THREE.Group(); pin.position.copy(base); S.add(pin);
+    let lm = A.map && A.map.scene.getObjectByName('Landmark_' + m.id);
+    if (lm) { lm = dress(lm.clone(true)); lm.position.set(0, 0, 0); lm.scale.multiplyScalar(MAP.s); pin.add(lm); }
+    else { lm = new THREE.Group(); const tw = new THREE.Mesh(new THREE.ConeGeometry(.035, .16, 4).translate(0, .08, 0), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: .5, flatShading: true, metalness: .3, roughness: .4 })); lm.add(tw); pin.add(lm); }
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(.004, .016, .42, 12, 1, true).translate(0, .21, 0), M(holoMat(m.color, .8))); pin.add(beam);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(.035, .044, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: col, transparent: true, side: THREE.DoubleSide, toneMapped: false, depthWrite: false })); ring.position.y = .012; pin.add(ring);
     const ring2 = ring.clone(); ring2.material = ring.material.clone(); pin.add(ring2);
-    const head = glowSprite(col, .17); head.position.z = .23; pin.add(head);
-    const num = textSprite(`${m.n}`, '#ffffff', .07); num.position.z = .23; num.renderOrder = 3; num.material.depthTest = false; pin.add(num);
-    const star = textSprite('★', '#ffd36e', .07); star.position.set(.05, .05, .23); star.visible = !!save.done[m.id]; pin.add(star);
-    const label = new THREE.Object3D(); label.position.z = .3; pin.add(label);
-    const hit = new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), new THREE.MeshBasicMaterial({ visible: false })); hit.position.z = .18; hit.userData.mission = m; pin.add(hit);
-    HQ.pins.push({ m, pin, head, ring, ring2, beacon, star, label, hit, dir });
+    const head = glowSprite(col, .17); head.position.y = .44; pin.add(head);
+    const num = textSprite(`${m.n}`, '#ffffff', .07); num.position.y = .44; num.renderOrder = 3; num.material.depthTest = false; pin.add(num);
+    const star = textSprite('★', '#ffd36e', .07); star.position.set(.05, .49, 0); star.visible = !!save.done[m.id]; pin.add(star);
+    const label = new THREE.Object3D(); label.position.y = .5; pin.add(label);
+    const hit = new THREE.Mesh(new THREE.CylinderGeometry(.09, .09, .55, 10).translate(0, .27, 0), new THREE.MeshBasicMaterial({ visible: false })); hit.userData.mission = m; pin.add(hit);
+    HQ.pins.push({ m, pin, head, ring, ring2, beacon: beam, star, label, hit, lm, base });
   });
   HQ.upd.push((dt, t) => {
-    scanRing.position.y = Math.sin(t * .7) * R * .92; const s = Math.sqrt(Math.max(0, 1 - (scanRing.position.y / (R * 1.02)) ** 2)); scanRing.scale.set(Math.max(.05, s), 1, Math.max(.05, s));
-    for (const o of orbits) { o.a += dt * o.sp; o.sat.position.set(Math.cos(o.a) * o.r, 0, Math.sin(o.a) * o.r); }
-    disc.material.opacity = .28 + Math.sin(t * 2) * .06;
+    const sweep = HQ.mapC.x + ((t * .25) % 1.4 - .2) / 1 * HQ.mapW - HQ.mapW / 2;
+    for (const mm of HQ.mats) if (mm.uniforms.uScan) mm.uniforms.uScan.value = sweep;
+    for (const p of HQ.packets) { p.t = (p.t + dt * p.sp) % 1; p.pk.position.copy(p.curve.getPointAt(p.t)); }
+    for (const c of HQ.clouds) { c.position.x += c.userData.v * dt; if (c.position.x > HQ.mapC.x + HQ.mapW / 2) c.position.x = HQ.mapC.x - HQ.mapW / 2; }
+    if (HQ.mapDisc) HQ.mapDisc.material.opacity = .28 + Math.sin(t * 2) * .06;
   });
+  HQ.focus = HQ.mapC.clone(); HQ.zoom = 1; HQ.focusTo = null;
 }
 // slow glowing dust in the air of the room
 function buildMotes() {
@@ -489,11 +562,11 @@ function setTrophy(i) {
     const tp = $('tPlay'); if (tp) tp.onclick = () => { setView('globe'); setTimeout(() => selectMission(m), 650); }; }
 }
 function setView(v) {
-  if (HQ.tw && HQ.tw.to === v) return; SFX.whoosh(); computeViews();
+  if (HQ.tw && HQ.tw.to === v) return; SFX.whoosh(); if (v === 'globe') { HQ.focus.copy(HQ.mapC); HQ.zoom = 1; HQ.focusTo = null; HQ.zoomTo = 1; } computeViews();
   if (v === 'left') { HQ.tIdx = PORTRAIT() ? 0 : -1; if (HQ.tIdx >= 0) HQ.views.left = HQ.caseViews[0]; }
   const to = HQ.views[v]; HQ.tw = { to: v, p0: camera.position.clone(), l0: HQ.look.clone(), p1: to.p.clone(), l1: to.l.clone(), t: 0, d: v === 'globe' || HQ.view === 'globe' ? 1.3 : 1.0 }; HQ.view = v;
   document.body.dataset.view = v;
-  if (v === 'center') { showScreen('hq'); updateHQText(); HQ.selected = null; HQ.spinTo = null; }
+  if (v === 'center') { showScreen('hq'); updateHQText(); HQ.selected = null; HQ.focusTo = null; }
   else if (v === 'globe') { showScreen('globe'); renderMissionList(); $('card').classList.add('hidden-card'); $('globeHint').classList.remove('gone'); }
   else { showScreen('side'); $('sideTitle').textContent = v === 'left' ? 'TROPHY ROOM' : 'AGENT STATS'; if (v === 'right') drawBoard(); $('statsPanel').classList.toggle('show', v === 'right'); $('trophyNav').classList.toggle('show', v === 'left'); $('labels').innerHTML = ''; if (v === 'left') { const keep = HQ.tw; setTrophy(HQ.tIdx); HQ.tw = keep; } }
 }
@@ -508,26 +581,28 @@ function selectMission(m) {
   $('cardN').textContent = `MISSION ${m.n} · ${m.where.toUpperCase()}`; $('cardName').textContent = m.name; $('cardPlace').textContent = m.place; $('cardStory').textContent = m.story;
   $('cardTime').textContent = `⏱ ${m.mins} min`; $('cardArt').textContent = `◆ ${m.artifact}`; const d = save.done[m.id]; $('cardBest').textContent = d ? `Best: ${'★'.repeat(d.stars)}${'☆'.repeat(3 - d.stars)}` : 'New mission';
   $('card').style.setProperty('--c', m.color); const c = $('card'); c.classList.add('hidden-card'); void c.offsetWidth; c.classList.remove('hidden-card');
-  HQ.spinTo = spinFor(m); HQ.vel = { x: 0, y: 0 };
+  HQ.focusTo = focusFor(m); HQ.zoomTo = .78; HQ.vel = { x: 0, z: 0 };
 }
 // the globe turn that brings a mission's pin to face the camera (a little tilt for places far north or south)
-const spinFor = (m) => ({ x: THREE.MathUtils.degToRad(m.lat) * .8, y: -THREE.MathUtils.degToRad(m.lon) });
+const focusFor = (m) => HQ.pins.find((p) => p.m === m).base.clone();
+function clampFocus() { const b = HQ.mapBox; HQ.focus.x = clamp(HQ.focus.x, b.min.x + .3, b.max.x - .3); HQ.focus.z = clamp(HQ.focus.z, b.min.z + .2, b.max.z - .2); }
 function hqFrame(dt, t) {
   for (const mm of HQ.mats) mm.uniforms.uTime.value = t;
   for (const f of HQ.upd) f(dt, t);
-  const s = HQ.spin.rotation, drag = HQ.drag;
-  if (drag && drag.on) { /* the finger turns it */ }
-  else if (HQ.spinTo) { let dy = HQ.spinTo.y - s.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); s.y += dy * Math.min(1, dt * 3.2); s.x += (HQ.spinTo.x - s.x) * Math.min(1, dt * 3.2); }
-  else if (HQ.vel && (Math.abs(HQ.vel.y) > .002 || Math.abs(HQ.vel.x) > .002)) { s.y += HQ.vel.y * dt * 60; s.x = clamp(s.x + HQ.vel.x * dt * 60, -1.1, 1.1); HQ.vel.y *= Math.pow(.05, dt); HQ.vel.x *= Math.pow(.05, dt); }
-  else { s.y += dt * (HQ.view === 'globe' ? .06 : .14); s.x += (.3 - s.x) * dt * .5; }
+  const drag = HQ.drag;
+  if (drag && drag.on) { /* the finger moves it */ }
+  else if (HQ.focusTo) { HQ.focus.lerp(HQ.focusTo, Math.min(1, dt * 3)); HQ.zoom += ((HQ.zoomTo ?? HQ.zoom) - HQ.zoom) * Math.min(1, dt * 3); }
+  else if (HQ.vel && (Math.abs(HQ.vel.x) > .0005 || Math.abs(HQ.vel.z) > .0005)) { HQ.focus.x += HQ.vel.x; HQ.focus.z += HQ.vel.z; clampFocus(); HQ.vel.x *= Math.pow(.02, dt); HQ.vel.z *= Math.pow(.02, dt); }
+  if (HQ.view === 'globe' && !HQ.tw) { const v = mapView(HQ.focus, HQ.zoom); camera.position.lerp(v.p, Math.min(1, dt * 8)); HQ.look.lerp(v.l, Math.min(1, dt * 8)); }
   for (const p of HQ.pins) { const sel = HQ.selected === p.m, k = (t * .8 + p.m.n * .23) % 1, k2 = (k + .5) % 1;
     p.ring.scale.setScalar(1 + k * (sel ? 3.4 : 2)); p.ring.material.opacity = (1 - k) * .9; p.ring2.scale.setScalar(1 + k2 * (sel ? 3.4 : 2)); p.ring2.material.opacity = (1 - k2) * .9;
-    p.head.scale.setScalar(sel ? .3 + Math.sin(t * 6) * .03 : (HQ.selected ? .13 : .17)); p.beacon.scale.set(sel ? 1.6 : 1, sel ? 1.6 : 1, sel ? 1.6 : 1); p.head.position.z = sel ? .35 : .23; p.head.material.opacity = HQ.selected && !sel ? .6 : 1;
+    p.head.scale.setScalar(sel ? .21 + Math.sin(t * 6) * .02 : (HQ.selected ? .13 : .17)); p.beacon.scale.set(sel ? 1.8 : 1, sel ? 1.25 : 1, sel ? 1.8 : 1); p.head.position.y = sel ? .56 : .44; p.label.position.y = sel ? .62 : .5; p.head.material.opacity = HQ.selected && !sel ? .6 : 1;
+    if (p.lm) p.lm.rotation.y += dt * (sel ? .8 : .25);
  p.star.visible = !!save.done[p.m.id]; }
   placePinTag();
   HQ.arts.forEach((a) => a && (a.rotation.y += dt * .8));
   HQ.cases.forEach((c, k) => { if (c.cone.visible) c.cone.material.uniforms.uA.value = .08 + Math.sin(t * 1.5 + k) * .025; });
-  HQ.fox.update(dt, false, 0); if (HQ.foxHead) HQ.foxHead.rotation.x -= HQ_FOX.tilt * .6; if (HQ.foxNeck) HQ.foxNeck.rotation.x -= HQ_FOX.tilt * .4;   // (looking up at the hologram)
+  HQ.fox.update(dt, false, 0); if (HQ.foxHead) HQ.foxHead.rotation.x -= HQ_FOX.tilt * .6; if (HQ.foxNeck) HQ.foxNeck.rotation.x -= HQ_FOX.tilt * .4;   // (looking down at the map)
   hqDim(dt); navArrowsFrame(dt, t);
   if (HQ.tw) { const w = HQ.tw; w.t = Math.min(1, w.t + dt / w.d); const k = ease(w.t); camera.position.lerpVectors(w.p0, w.p1, k); HQ.look.lerpVectors(w.l0, w.l1, k); if (w.t >= 1) HQ.tw = null; }
   else if (HQ.view === 'center') { const v = HQ.views.center; camera.position.x = v.p.x + Math.sin(t * .2) * .12; camera.position.y = v.p.y + Math.sin(t * .27) * .04; }
@@ -538,8 +613,9 @@ function hqFrame(dt, t) {
 const FOG0 = new THREE.Color('#040814'), FOG1 = new THREE.Color('#000105');
 function hqDim(dt) {
   const want = HQ.view === 'globe' && !(HQ.tw && HQ.tw.to !== 'globe') ? 1 : 0; HQ.dim += (want - HQ.dim) * Math.min(1, dt * 3); const k = HQ.dim;
-  for (const L of HQ.lights) L.l.intensity = L.i * (1 - .85 * k); if (HQ.rim) HQ.rim.intensity = 30 * (1 - .7 * k);
-  const dc = camera.position.distanceTo(HQ.gc), f = HQ.scene.fog; f.near = lerp(16, dc + HQ.R * 1.25, k); f.far = lerp(42, dc + 6, k); f.color.copy(FOG0).lerp(FOG1, k); HQ.scene.background.copy(f.color);
+  HQ.fox.root.visible = HQ.foxShadow.visible = k < .5;   // (in mission select he steps back into the dark, out of the map's way)
+  for (const L of HQ.lights) L.l.intensity = L.i * (1 - .85 * k); for (const g of HQ.glowDim) g.m.color.copy(g.c).multiplyScalar(1 - .9 * k); if (HQ.rim) HQ.rim.intensity = 30 * (1 - .7 * k);
+  const dc = camera.position.distanceTo(HQ.gc), f = HQ.scene.fog; f.near = lerp(16, dc + 2.2, k); f.far = lerp(42, dc + 7, k); f.color.copy(FOG0).lerp(FOG1, k); HQ.scene.background.copy(f.color);
 }
 // the navigator arrows beside the hologram: tap ‹ or › to fly to the previous or next mission
 function buildNavArrows() {
@@ -547,7 +623,7 @@ function buildNavArrows() {
   const sh = new THREE.Shape(); sh.moveTo(-.07, .16); sh.lineTo(.09, 0); sh.lineTo(-.07, -.16); sh.lineTo(-.12, -.11); sh.lineTo(-.01, 0); sh.lineTo(-.12, .11); sh.closePath();
   const chev = new THREE.ShapeGeometry(sh);
   for (const dirn of [-1, 1]) {
-    const a = new THREE.Group(); a.position.x = dirn * HQ.R * 1.72; grp.add(a);
+    const a = new THREE.Group(); grp.add(a);
     const ring = new THREE.Mesh(new THREE.RingGeometry(.2, .215, 48), new THREE.MeshBasicMaterial({ color: '#5ff3ff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); a.add(ring);
     const disc = new THREE.Mesh(new THREE.CircleGeometry(.2, 48), new THREE.MeshBasicMaterial({ color: '#0a3a5c', transparent: true, opacity: .45, depthWrite: false })); a.add(disc);
     const arr = new THREE.Group(); a.add(arr);
@@ -562,11 +638,12 @@ const navTarget = (dirn) => { const i = HQ.selected ? MISSIONS.indexOf(HQ.select
 function navArrowsFrame(dt, t) {
   const N = HQ.navA; if (!N) return; const want = HQ.view === 'globe' && !HQ.tw ? 1 : 0; N.a += (want - N.a) * Math.min(1, dt * 5);
   N.grp.visible = N.a > .02; if (!N.grp.visible) return;
-  N.grp.position.copy(HQ.gc); N.grp.quaternion.copy(camera.quaternion);
-  // on a wide screen the card sits on the right: the arrows stay on the globe's own sides
+  N.grp.position.copy(HQ.look); N.grp.quaternion.copy(camera.quaternion); const dist = camera.position.distanceTo(HQ.look), sc = dist / 3.8; N.grp.scale.setScalar(sc);
+  const hw = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect / sc, P = PORTRAIT();
+  // tall screens: at the screen's sides; wide: around the map part of the screen (the card is on the right)
   for (const A of N.arrows) {
     A.pop = Math.max(0, A.pop - dt * 3); const s = (1 + A.pop * .35) * (.85 + .15 * N.a);
-    A.a.scale.setScalar(s); A.arr.position.x = A.dirn * (Math.sin(t * 4) * .02 + A.pop * .06);
+    A.a.position.set(P ? A.dirn * hw * .8 : (A.dirn < 0 ? -hw * .5 : hw * .3), P ? .05 : 0, 0); A.a.scale.setScalar(s); A.arr.position.x = A.dirn * (Math.sin(t * 4) * .02 + A.pop * .06);
     A.ring.material.opacity = N.a * (.6 + .3 * Math.sin(t * 3 + A.dirn)); A.arr.children.forEach((c, k) => (c.material.opacity = N.a * (k === (A.dirn > 0 ? 1 : 0) ? 1 : .55)));
     const m = navTarget(A.dirn), key = m.id; if (A.key !== key) { A.key = key; A.a.remove(A.lbl); A.lbl = textSprite(`${m.n} · ${m.place.split(',')[0].toUpperCase()}`, m.color, .075); A.lbl.position.y = -.31; A.lbl.renderOrder = 4; A.lbl.material.depthTest = false; A.a.add(A.lbl); }
     A.lbl.material.opacity = N.a * .9;
@@ -577,7 +654,7 @@ function navArrowHit() { const N = HQ.navA; if (!N || !N.grp.visible) return nul
 function placePinTag() {
   const el = $('pinTag'), p = HQ.selected && HQ.view === 'globe' && !HQ.tw && HQ.pins.find((q) => q.m === HQ.selected);
   if (!p) { el.classList.remove('show'); return; }
-  const w = p.label.getWorldPosition(new THREE.Vector3()), front = w.clone().sub(HQ.gc).dot(camera.position.clone().sub(HQ.gc)) > 0, v = w.project(camera);
+  const w = p.label.getWorldPosition(new THREE.Vector3()), v = w.project(camera), front = v.z < 1;
   if (!front) { el.classList.remove('show'); return; }
   if (el.dataset.id !== p.m.id) { el.dataset.id = p.m.id; el.style.setProperty('--c', p.m.color); el.innerHTML = `<i></i><b>${esc(p.m.place.split(',')[0].toUpperCase())}</b><span>${p.m.lat.toFixed(1)}° ${p.m.lat >= 0 ? 'N' : 'S'} · ${Math.abs(p.m.lon).toFixed(1)}° ${p.m.lon >= 0 ? 'E' : 'W'}</span>`; el.classList.remove('show'); void el.offsetWidth; }
   el.style.left = ((v.x + 1) / 2 * innerWidth) + 'px'; el.style.top = ((1 - v.y) / 2 * innerHeight) + 'px'; el.classList.add('show');
@@ -589,7 +666,7 @@ function placeLabels() {
 }
 // the globe is touchable: drag to spin it (it keeps turning a little when let go), tap a pin to fly to that mission
 const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
-HQ.drag = { on: false }; HQ.vel = { x: 0, y: 0 };
+HQ.drag = { on: false }; HQ.vel = { x: 0, z: 0 };
 canvas.addEventListener('pointerdown', (e) => {
   if (mode !== 'hq' || HQ.view !== 'globe' || anyOverlay()) return;
   HQ.drag = { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, moved: 0 }; canvas.setPointerCapture(e.pointerId);
@@ -597,7 +674,7 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   const d = HQ.drag; if (!d.on || e.pointerId !== d.id) return;
   const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
-  if (d.moved > 8) { HQ.spinTo = null; const k = 3.2 / Math.min(innerWidth, innerHeight); HQ.spin.rotation.y += dx * k; HQ.spin.rotation.x = clamp(HQ.spin.rotation.x + dy * k, -1.1, 1.1); HQ.vel = { x: dy * k, y: dx * k }; $('globeHint').classList.add('gone'); }
+  if (d.moved > 8) { HQ.focusTo = null; const k = 2 * camera.position.distanceTo(HQ.look) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / innerHeight; HQ.focus.x -= dx * k; HQ.focus.z -= dy * k * 1.15; clampFocus(); HQ.vel = { x: -dx * k, z: -dy * k * 1.15 }; $('globeHint').classList.add('gone'); }
 });
 const endDrag = (e) => {
   const d = HQ.drag; if (!d.on || e.pointerId !== d.id) return; d.on = false;
@@ -605,12 +682,13 @@ const endDrag = (e) => {
     const na = navArrowHit(); if (na) { na.pop = 1; SFX.whoosh(); selectMission(navTarget(na.dirn)); return; }
     const hit = ray.intersectObjects(HQ.pins.map((p) => p.hit), false)[0]; if (hit) selectMission(hit.object.userData.mission); }
 };
+canvas.addEventListener('wheel', (e) => { if (mode !== 'hq' || HQ.view !== 'globe' || anyOverlay()) return; e.preventDefault(); HQ.focusTo = null; HQ.zoom = clamp(HQ.zoom * (1 + e.deltaY * .0012), .5, 1.25); }, { passive: false });
 canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
 // on the HQ screen itself, a tap on the hologram opens the mission select
 canvas.addEventListener('click', (e) => {
   if (mode !== 'hq' || HQ.view !== 'center' || anyOverlay() || HQ.tw) return;
   mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(mouse, camera);
-  const s = new THREE.Sphere(HQ.gc, HQ.R * 1.3); if (ray.ray.intersectsSphere(s)) { SFX.click(); setView('globe'); }
+  if (ray.ray.intersectsBox(HQ.mapBox)) { SFX.click(); setView('globe'); }
 });
 
 /* ================= missions ================= */
@@ -635,7 +713,7 @@ async function runStages() {
   if (mission) finishMission();
 }
 function stageBackdrop() { // the HQ hologram view stays behind the story screens
-  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; computeViews(); const gv = HQ.views.globe; camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.spinTo = spinFor(m); }
+  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; computeViews(); const gv = HQ.views.globe; camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.focus.copy(focusFor(m)); HQ.zoom = .78; HQ.focusTo = null; const v = mapView(HQ.focus, HQ.zoom); camera.position.copy(v.p); HQ.look.copy(v.l); }
 }
 function magpieSet(kind) {
   if (!A.magpie) return null; const set = makeSet('#0e1120'), mp = new THREE.Group(), rg = rigged(A.magpie, 1.5); mp.add(rg.inner); set.S.add(mp); rg.play(kind === 'caught' ? 'caught' : 'laugh', 0);
@@ -713,7 +791,7 @@ function finishMission() {
   mission = null;
 }
 $('repHome').onclick = () => { SFX.click(); overlay('report', false); $('report').classList.remove('low'); SET = null; mode = 'hq'; goHQ(); };
-function goHQ() { mode = 'hq'; refreshTrophies(); HQ.pins.forEach((p) => (p.done = !!save.done[p.m.id])); drawBoard(); HQ.view = 'globe'; setView('center'); HQ.spinTo = null; HQ.selected = null; }
+function goHQ() { mode = 'hq'; refreshTrophies(); HQ.pins.forEach((p) => (p.done = !!save.done[p.m.id])); drawBoard(); HQ.view = 'globe'; setView('center'); HQ.focusTo = null; HQ.selected = null; }
 
 /* ================= rooms (sneaking, laser halls, escapes) ================= */
 const CELL = 2, WALL_H = 2.1;
