@@ -5,7 +5,7 @@
 // 3D: the Blender models in models/ (made on the Windows PC); until each one arrives a stand-in is used.
 import * as THREE from './lib/three.module.min.js';
 import { GLTFLoader } from './lib/GLTFLoader.js';
-import { MISSIONS, RANKS } from './missions.js?v=4';
+import { MISSIONS, RANKS } from './missions.js?v=5';
 import { EffectComposer } from './lib/pp/EffectComposer.js';
 import { RenderPass } from './lib/pp/RenderPass.js';
 import { UnrealBloomPass } from './lib/pp/UnrealBloomPass.js';
@@ -64,7 +64,7 @@ if (BLOOM) { composer = new EffectComposer(renderer); renderPass = new RenderPas
   bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), .35, .35, 1.0); composer.addPass(bloomPass); composer.addPass(new OutputPass()); }
 function draw(scene, cam, bloom = .8) { if (!composer) { renderer.render(scene, cam); return; } renderPass.scene = scene; renderPass.camera = cam; bloomPass.strength = bloom; composer.render(); }
 function resize() {
-  renderer.setPixelRatio(Math.min(devicePixelRatio, save.gfx === 'low' ? 1.25 : 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, save.gfx === 'low' ? 1.5 : 2));
   renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight;
   camera.fov = camera.aspect < .9 ? 62 : 50; camera.updateProjectionMatrix();
   if (composer) { composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(innerWidth, innerHeight); }
@@ -192,6 +192,73 @@ function ask({ kicker, title, visual }) {
     if (window.FS_AUTO) setTimeout(() => { const k = window.FS_AUTO === 'wrong' ? q.opts.findIndex((o) => !o.ok) : q.opts.findIndex((o) => o.ok); box.children[k].click(); }, 150);
   });
 }
+// the score book for one answer (the quiz gadget and the hacking terminal both use it)
+function grade(q, ok) {
+  save.answered++; if (mission) mission.stats.asked++;
+  if (ok) { save.correct++; if (mission) mission.stats.right++; save.learned[q.right] = (save.learned[q.right] || 0) + 1; }
+  else { Q.again.push(q.src); Q.askedSince = 0; if (mission) mission.missed.push(q); }
+  persist();
+}
+/* ---------- the hacking terminal: full screen. Every right answer breaches one node of the Magpie's network ---------- */
+const GLYPH = '▓▒░<>/\\#%&@$01ΣΔ', scramble = (n) => Array.from({ length: n }, () => (Math.random() < .14 ? ' ' : GLYPH[Math.random() * GLYPH.length | 0])).join('');
+function scrambleIn(el, text, ms = 450) { const t0 = performance.now(); const step = () => { const k = (performance.now() - t0) / ms, n = Math.floor(clamp(k, 0, 1) * text.length); el.textContent = text.slice(0, n) + Array.from(text.slice(n), (c) => (c === ' ' ? ' ' : GLYPH[Math.random() * GLYPH.length | 0])).join(''); if (k < 1) requestAnimationFrame(step); else el.textContent = text; }; step(); }
+const HK = { on: false };
+function hackRain() {
+  const cv = $('hkRain'), g = cv.getContext('2d'); const fit = () => { cv.width = innerWidth; cv.height = innerHeight; HK.cols = Array.from({ length: Math.ceil(innerWidth / 16) }, () => rand(-40, 0)); }; fit();
+  const c = HK.color || '#5ff3ff'; let last = 0;
+  const step = (now) => { if (!HK.on) return; requestAnimationFrame(step); if (now - last < 45) return; last = now;
+    if (cv.width !== innerWidth || cv.height !== innerHeight) fit();
+    g.fillStyle = 'rgba(1,5,14,.16)'; g.fillRect(0, 0, cv.width, cv.height); g.font = '14px monospace';
+    HK.cols.forEach((y, i) => { g.fillStyle = Math.random() < .06 ? '#ffffff' : c; g.globalAlpha = .5; g.fillText('0123456789ABCDEF'[Math.random() * 16 | 0], i * 16, y * 16); g.globalAlpha = 1; HK.cols[i] = y * 16 > cv.height && Math.random() > .97 ? 0 : y + 1; }); };
+  g.fillStyle = '#01050e'; g.fillRect(0, 0, cv.width, cv.height); requestAnimationFrame(step);
+}
+// n nodes to breach; labels name them; onRight(k) / onWrong() let the room react (a laser goes off…)
+function hackSession({ kicker, title, intro = '', file = 'magpie://net', n = 1, labels, color = '#5ff3ff', onRight, onWrong }) {
+  return new Promise((resolve) => {
+    HK.on = true; HK.color = color; const box = $('hack'); box.style.setProperty('--c', color);
+    $('hkKicker').textContent = kicker; $('hkTitle').textContent = title; $('hkFile').textContent = file; $('hkIntro').textContent = intro; $('hkIntro').style.display = intro ? '' : 'none';
+    const names = labels || Array.from({ length: n }, (_, k) => `NODE ${k + 1}`);
+    $('hkNet').innerHTML = names.map((l, k) => `${k ? '<u><s></s></u>' : ''}<div class="node" data-k="${k}"><em>${k + 1}</em><span>${esc(l)}</span></div>`).join('') + '<u><s></s></u><div class="node core"><em>⌬</em><span>CORE</span></div>';
+    const nodes = [...$('hkNet').querySelectorAll('.node')], links = [...$('hkNet').querySelectorAll('u')];
+    const done = []; let got = 0, scr = 0;
+    overlay('hack', true); hackRain(); SFX.click();
+    const tick = setInterval(() => { $('hkLines').querySelectorAll('.ln.locked b').forEach((b) => (b.textContent = scramble(b.dataset.n | 0))); }, 110);
+    const render = (q) => {
+      $('hkProg').textContent = `${got} / ${n}`; nodes.forEach((el, k) => { el.classList.toggle('done', k < got); el.classList.toggle('cur', k === got); }); links.forEach((el, k) => el.classList.toggle('done', k < got));
+      const hint = q.hint ? `<span class="hint">(${esc(q.hint)})</span>` : '';
+      $('hkLines').innerHTML = done.map((t, k) => `<div class="ln ok"><i>${String(k + 1).padStart(2, '0')}</i><span>${esc(t)}</span><em>✓</em></div>`).join('')
+        + `<div class="ln cur"><i>${String(got + 1).padStart(2, '0')}</i><span>${esc(q.before)}<b class="gap">_____</b>${hint}${esc(q.after)}</span></div>`
+        + Array.from({ length: n - got - 1 }, (_, k) => { const L = 18 + ((k * 7 + got * 5) % 16); return `<div class="ln locked"><i>${String(got + k + 2).padStart(2, '0')}</i><b data-n="${L}">${scramble(L)}</b><em>🔒</em></div>`; }).join('');
+      $('hkFb').textContent = ''; $('hkFb').className = 'hk-fb';
+      const opts = $('hkOpts'); opts.innerHTML = '';
+      q.opts.forEach((o, i) => { const b = document.createElement('button'); b.className = 'chip'; b.innerHTML = `<i>0x${(Math.random() * 65535 | 0).toString(16).toUpperCase().padStart(4, '0')} · PKT ${i + 1}</i><b>${esc(o.text)}</b>`; b.style.animationDelay = (i * .08) + 's';
+        b.onclick = () => pickChip(q, o, b); opts.appendChild(b); });
+      if (window.FS_AUTO) setTimeout(() => { const k = window.FS_AUTO === 'wrong' ? q.opts.findIndex((o) => !o.ok) : q.opts.findIndex((o) => o.ok); opts.children[k] && opts.children[k].click(); }, 150);
+    };
+    let busy = false;
+    const pickChip = (q, o, b) => {
+      if (busy) return; busy = true; grade(q, o.ok); const gap = $('hkLines').querySelector('.gap'), hk = $('hk');
+      [...$('hkOpts').children].forEach((x) => x.classList.add('used'));
+      if (o.ok) {
+        b.classList.add('right'); gap.classList.add('ok'); scrambleIn(gap, q.right, 380); SFX.right(); tone(1320, .06, 'square', .03, .12); tone(1760, .06, 'square', .03, .2);
+        $('hkFb').textContent = pick(['Packet accepted · node breached', 'Injection successful', 'Firewall bypassed', 'Code accepted, agent!']); $('hkFb').className = 'hk-fb ok';
+        setTimeout(() => { done.push(`${q.before}${q.right}${q.after}`.replace(/\s+/g, ' ').trim()); got++; nodes[got - 1].classList.add('flash'); if (onRight) onRight(got); next(); }, 850);
+      } else {
+        b.classList.add('wrong'); [...$('hkOpts').children][q.opts.findIndex((x) => x.ok)].classList.add('right'); gap.classList.add('bad'); gap.textContent = q.right; SFX.wrong(); hk.classList.remove('glitch'); void hk.offsetWidth; hk.classList.add('glitch');
+        $('hkFb').innerHTML = `FIREWALL ALERT! The right word is <b>${esc(q.right)}</b>. It will come back later.`; $('hkFb').className = 'hk-fb bad';
+        if (onWrong) onWrong(); setTimeout(next, 2000);
+      }
+    };
+    const next = () => {
+      busy = false;
+      if (got >= n) { $('hkProg').textContent = `${n} / ${n}`; nodes.forEach((el) => el.classList.add('done')); links.forEach((el) => el.classList.add('done')); $('hkOpts').innerHTML = ''; $('hkHelp').style.visibility = 'hidden';
+        $('hkLines').querySelectorAll('.ln').forEach((el) => el.classList.add('ok')); const st = $('hkStamp'); st.classList.remove('show'); void st.offsetWidth; st.classList.add('show'); SFX.door();
+        setTimeout(() => { HK.on = false; clearInterval(tick); overlay('hack', false); st.classList.remove('show'); $('hkHelp').style.visibility = ''; resolve(); }, 1500); return; }
+      const q = nextQuestion(); if (!q) { got++; next(); return; } render(q);
+    };
+    next();
+  });
+}
 async function askUntilRight(opts, onWrong) { for (;;) { const ok = await ask(opts); if (ok) return; if (onWrong) onWrong(); } }
 
 /* ================= HQ ================= */
@@ -203,11 +270,12 @@ HQ.scene.background = new THREE.Color('#040814'); HQ.scene.fog = new THREE.Fog('
 const PORTRAIT = () => camera.aspect < .9;
 function buildHQ() {
   const S = HQ.scene;
-  S.add(new THREE.HemisphereLight('#7fb6ff', '#140a2a', .75));
+  const hemi = new THREE.HemisphereLight('#7fb6ff', '#140a2a', .75); S.add(hemi);
   const key = new THREE.PointLight('#7af0ff', 34, 14, 1.6); key.position.set(0, 3.4, -2); S.add(key);
   const vio = new THREE.PointLight('#b57bff', 30, 18, 1.6); vio.position.set(-5, 3, 1); S.add(vio);
   const warm = new THREE.PointLight('#ffd9a8', 20, 14, 1.6); warm.position.set(2, 3, 4); S.add(warm);
   const pnk = new THREE.PointLight('#ff6ec7', 22, 14, 1.6); pnk.position.set(5, 3, -1); S.add(pnk);
+  HQ.lights = [hemi, key, vio, warm, pnk].map((l) => ({ l, i: l.intensity })); HQ.dim = 0;
   let screen = null;
   if (A.room) {
     const room = dress(A.room.scene); S.add(room);
@@ -244,28 +312,28 @@ function buildHQ() {
   // Foxino looking at the globe (the Blender spy plays LookAtGlobe: hand on chin, looking up to his left)
   const fp = HQ.FOX_AT = new THREE.Vector3(HQ.gc.x - 1.75, 0, HQ.gc.z + .55);
   HQ.fox = makeFoxino(false); S.add(HQ.fox.root); HQ.foxShadow = blobShadow(.45); S.add(HQ.foxShadow); placeHQFox();
-  if (HQ.fox.hasClips) { HQ.fox.manual = true; HQ.fox.play('lookatglobe', 0); }
-  const rim = new THREE.SpotLight('#9ff3ff', 26, 7, .45, .6, 1.4); rim.position.set(HQ.gc.x, 3.4, HQ.gc.z - .4); rim.target = HQ.fox.root; S.add(rim); HQ.rim = rim;
-  buildGlobe(); buildMotes(); computeViews();
+  if (HQ.fox.hasClips) { HQ.fox.manual = true; HQ.fox.play(HQ_FOX.clip, 0); } HQ.foxHead = findBone(HQ.fox.inner, /Head$/); HQ.foxNeck = findBone(HQ.fox.inner, /Neck$/);
+  const rim = new THREE.SpotLight('#9ff3ff', 30, 7, .5, .6, 1.4); rim.position.set(HQ.gc.x + .3, 3.6, HQ.gc.z + .6); rim.target = HQ.fox.root; S.add(rim); HQ.rim = rim;
+  buildGlobe(); buildNavArrows(); buildMotes(); computeViews();
   // the opening shot: from high above the hologram down to Foxino
   const v = HQ.views.center; HQ.look = v.l.clone(); camera.position.copy(v.p).add(new THREE.Vector3(0, 3.2, 3.5)); camera.lookAt(HQ.look);
   HQ.tw = { to: 'center', p0: camera.position.clone(), l0: v.l.clone().add(new THREE.Vector3(0, 1.2, 0)), p1: v.p.clone(), l1: v.l.clone(), t: 0, d: 2.6 };
 }
 // the cameras for each view, fitted to the screen: what must be on screen is given as a width (and a height) at a distance
 function fitDist(w, h) { const vt = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), ht = vt * camera.aspect; return Math.max(w / 2 / ht, h / 2 / vt); }
-// where Foxino stands: beside the table on a wide screen; on a tall one in front of it, back three-quarters to us, looking up at
-// the hologram above him (the shot stacks up the screen: Foxino and his tail at the bottom, the globe over his head)
+// where Foxino stands: behind the projector table, looking up at the hologram; we look at him through it
+const HQ_FOX = { x: -.9, z: -1.95, s: 1.5, turn: 0, tilt: .3, clip: 'idle' };   // (behind the hologram, looking up at it)
 function placeHQFox() {
-  const g = HQ.gc, P = PORTRAIT(), f = HQ.FOX_AT = P ? new THREE.Vector3(g.x - .62, 0, g.z + 1.55) : new THREE.Vector3(g.x - 1.75, 0, g.z + .55);
-  HQ.fox.root.position.copy(f); HQ.fox.root.rotation.y = P ? Math.PI + .95 : (HQ.fox.hasClips ? .15 : .75); HQ.foxShadow.position.set(f.x, .02, f.z);
+  const g = HQ.gc, f = HQ.FOX_AT = new THREE.Vector3(g.x + HQ_FOX.x, 0, g.z + HQ_FOX.z);
+  HQ.fox.root.position.copy(f); HQ.fox.root.scale.setScalar(HQ_FOX.s); HQ.fox.root.rotation.y = Math.atan2(g.x - f.x, g.z - f.z) + HQ_FOX.turn; HQ.foxShadow.position.set(f.x, .02, f.z);
 }
 function computeViews() {
   if (HQ.fox) placeHQFox();
   const g = HQ.gc, P = PORTRAIT(), f = HQ.FOX_AT;
   // centre: Foxino and the hologram together (on a tall screen the camera comes round so they stack up the screen)
-  const cx = (f.x + g.x) / 2 - .15, dC = fitDist(6.2, 3.5);
-  const center = P ? { p: new THREE.Vector3(g.x + .35, 1.05, g.z + 5.1), l: new THREE.Vector3(g.x - .12, 1.62, g.z) }
-    : { p: new THREE.Vector3(cx + .3, 1.7, g.z + dC), l: new THREE.Vector3(cx, 1.35, g.z - .1) };
+  const dC = P ? fitDist(2.6, 3.9) : fitDist(5.4, 3.3);
+  const center = P ? { p: new THREE.Vector3(g.x + .1, 1.5, g.z + dC), l: new THREE.Vector3(g.x, 1.38, g.z - .4) }
+    : { p: new THREE.Vector3(g.x + .25, 1.6, g.z + dC), l: new THREE.Vector3(g.x, 1.42, g.z - .4) };
   // the globe close-up: the globe in the top half (tall screens: above the mission card) or on the left (wide screens: card on the right)
   const dG = P ? fitDist(1.75, 1.75) * 1.62 : fitDist(4.2, 2.9);
   const globe = P ? { p: new THREE.Vector3(g.x, g.y + .32, g.z + dG), l: new THREE.Vector3(g.x, g.y - .42, g.z) }
@@ -459,12 +527,52 @@ function hqFrame(dt, t) {
   placePinTag();
   HQ.arts.forEach((a) => a && (a.rotation.y += dt * .8));
   HQ.cases.forEach((c, k) => { if (c.cone.visible) c.cone.material.uniforms.uA.value = .08 + Math.sin(t * 1.5 + k) * .025; });
-  HQ.fox.update(dt, false, 0);
+  HQ.fox.update(dt, false, 0); if (HQ.foxHead) HQ.foxHead.rotation.x -= HQ_FOX.tilt * .6; if (HQ.foxNeck) HQ.foxNeck.rotation.x -= HQ_FOX.tilt * .4;   // (looking up at the hologram)
+  hqDim(dt); navArrowsFrame(dt, t);
   if (HQ.tw) { const w = HQ.tw; w.t = Math.min(1, w.t + dt / w.d); const k = ease(w.t); camera.position.lerpVectors(w.p0, w.p1, k); HQ.look.lerpVectors(w.l0, w.l1, k); if (w.t >= 1) HQ.tw = null; }
   else if (HQ.view === 'center') { const v = HQ.views.center; camera.position.x = v.p.x + Math.sin(t * .2) * .12; camera.position.y = v.p.y + Math.sin(t * .27) * .04; }
   camera.lookAt(HQ.look);
   if (HQ.view === 'left' && !HQ.tw && HQ.tIdx < 0) placeLabels();
 }
+// mission select: the room's lights go down (and the room fades into the dark) so the hologram stands out
+const FOG0 = new THREE.Color('#040814'), FOG1 = new THREE.Color('#000105');
+function hqDim(dt) {
+  const want = HQ.view === 'globe' && !(HQ.tw && HQ.tw.to !== 'globe') ? 1 : 0; HQ.dim += (want - HQ.dim) * Math.min(1, dt * 3); const k = HQ.dim;
+  for (const L of HQ.lights) L.l.intensity = L.i * (1 - .85 * k); if (HQ.rim) HQ.rim.intensity = 30 * (1 - .7 * k);
+  const dc = camera.position.distanceTo(HQ.gc), f = HQ.scene.fog; f.near = lerp(16, dc + HQ.R * 1.25, k); f.far = lerp(42, dc + 6, k); f.color.copy(FOG0).lerp(FOG1, k); HQ.scene.background.copy(f.color);
+}
+// the navigator arrows beside the hologram: tap ‹ or › to fly to the previous or next mission
+function buildNavArrows() {
+  const grp = new THREE.Group(); HQ.scene.add(grp); HQ.navA = { grp, arrows: [], a: 0 };
+  const sh = new THREE.Shape(); sh.moveTo(-.07, .16); sh.lineTo(.09, 0); sh.lineTo(-.07, -.16); sh.lineTo(-.12, -.11); sh.lineTo(-.01, 0); sh.lineTo(-.12, .11); sh.closePath();
+  const chev = new THREE.ShapeGeometry(sh);
+  for (const dirn of [-1, 1]) {
+    const a = new THREE.Group(); a.position.x = dirn * HQ.R * 1.72; grp.add(a);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(.2, .215, 48), new THREE.MeshBasicMaterial({ color: '#5ff3ff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); a.add(ring);
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(.2, 48), new THREE.MeshBasicMaterial({ color: '#0a3a5c', transparent: true, opacity: .45, depthWrite: false })); a.add(disc);
+    const arr = new THREE.Group(); a.add(arr);
+    for (let k = 0; k < 2; k++) { const m = new THREE.Mesh(chev, new THREE.MeshBasicMaterial({ color: '#9ff8ff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide })); m.position.x = (k - .5) * .085 * dirn; m.scale.set(dirn * .75, .75, 1); arr.add(m); }
+    const lbl = textSprite(' ', '#bff8ff', .085); lbl.position.y = -.31; a.add(lbl);
+    const hit = new THREE.Mesh(new THREE.CircleGeometry(.3, 16), new THREE.MeshBasicMaterial({ visible: false })); hit.userData.nav = dirn; a.add(hit);
+    a.traverse((o) => { o.renderOrder = 4; if (o.material) o.material.depthTest = false; });
+    HQ.navA.arrows.push({ a, ring, arr, lbl, hit, dirn, pop: 0, key: '' });
+  }
+}
+const navTarget = (dirn) => { const i = HQ.selected ? MISSIONS.indexOf(HQ.selected) : (dirn > 0 ? -1 : 0); return MISSIONS[(i + dirn + MISSIONS.length) % MISSIONS.length]; };
+function navArrowsFrame(dt, t) {
+  const N = HQ.navA; if (!N) return; const want = HQ.view === 'globe' && !HQ.tw ? 1 : 0; N.a += (want - N.a) * Math.min(1, dt * 5);
+  N.grp.visible = N.a > .02; if (!N.grp.visible) return;
+  N.grp.position.copy(HQ.gc); N.grp.quaternion.copy(camera.quaternion);
+  // on a wide screen the card sits on the right: the arrows stay on the globe's own sides
+  for (const A of N.arrows) {
+    A.pop = Math.max(0, A.pop - dt * 3); const s = (1 + A.pop * .35) * (.85 + .15 * N.a);
+    A.a.scale.setScalar(s); A.arr.position.x = A.dirn * (Math.sin(t * 4) * .02 + A.pop * .06);
+    A.ring.material.opacity = N.a * (.6 + .3 * Math.sin(t * 3 + A.dirn)); A.arr.children.forEach((c, k) => (c.material.opacity = N.a * (k === (A.dirn > 0 ? 1 : 0) ? 1 : .55)));
+    const m = navTarget(A.dirn), key = m.id; if (A.key !== key) { A.key = key; A.a.remove(A.lbl); A.lbl = textSprite(`${m.n} · ${m.place.split(',')[0].toUpperCase()}`, m.color, .075); A.lbl.position.y = -.31; A.lbl.renderOrder = 4; A.lbl.material.depthTest = false; A.a.add(A.lbl); }
+    A.lbl.material.opacity = N.a * .9;
+  }
+}
+function navArrowHit() { const N = HQ.navA; if (!N || !N.grp.visible) return null; const h = ray.intersectObjects(N.arrows.map((A) => A.hit), false)[0]; return h ? N.arrows.find((A) => A.hit === h.object) : null; }
 // the lock-on tag over the chosen pin: a reticle and the place name, in the page (always sharp), following the pin
 function placePinTag() {
   const el = $('pinTag'), p = HQ.selected && HQ.view === 'globe' && !HQ.tw && HQ.pins.find((q) => q.m === HQ.selected);
@@ -494,6 +602,7 @@ canvas.addEventListener('pointermove', (e) => {
 const endDrag = (e) => {
   const d = HQ.drag; if (!d.on || e.pointerId !== d.id) return; d.on = false;
   if (d.moved <= 8) { mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(mouse, camera);
+    const na = navArrowHit(); if (na) { na.pop = 1; SFX.whoosh(); selectMission(navTarget(na.dirn)); return; }
     const hit = ray.intersectObjects(HQ.pins.map((p) => p.hit), false)[0]; if (hit) selectMission(hit.object.userData.mission); }
 };
 canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
@@ -545,14 +654,10 @@ function briefing(st) {
   });
 }
 async function decode(st) {
-  stageBackdrop(); const done = [];
-  for (let k = 0; k < st.n; k++) {
-    await askUntilRight({ kicker: 'DECODER · ' + st.title.toUpperCase(), title: k === 0 ? st.text : `Line ${k + 1} of ${st.n}: fill in the missing word.`,
-      visual: () => `<div class="msg">${done.map((s) => esc(s)).join('<br>')}${done.length ? '<br>' : ''}${Array.from({ length: st.n - done.length }, () => '<span class="redact">██████ ███ ██████████</span>').join('<br>')}</div>` });
-    done.push(lastSentence());
-  }
+  stageBackdrop(); const m = mission.m;
+  await hackSession({ kicker: 'DECODER · ' + st.title.toUpperCase(), title: 'Fill in the missing words to decode the message', intro: st.text, file: `magpie://${m.id}/intercept_${m.n}.enc`, n: st.n, labels: Array.from({ length: st.n }, (_, k) => `LINE ${k + 1}`), color: m.theme.trim });
   toast('MESSAGE DECODED', 'ok');
-  await wait(700);
+  await wait(500);
 }
 let lastQ = '';
 const lastSentence = () => $('qSentence').textContent.replace(/\s*\([^)]*\)/, '');
@@ -644,7 +749,7 @@ function playRoom(st) {
     const S = new THREE.Scene(); S.background = new THREE.Color(th.fog); S.fog = new THREE.Fog(th.fog, 18, 46);
     const hasKit = !!A.kits[mission.m.id], hemi = new THREE.HemisphereLight(th.light, hasKit ? th.fog : '#ffffff', hasKit ? (th.kitLight ?? .95) : 1.7); S.add(hemi); const sun = new THREE.DirectionalLight(hasKit ? th.light : '#ffffff', hasKit ? .9 : 1.6); sun.position.set(-6, 14, 8); S.add(sun);
     const ox = -(W - 1) * CELL / 2, oz = -(H - 1) * CELL / 2, cpos = (c, r) => new THREE.Vector3(ox + c * CELL, 0, oz + r * CELL);
-    const R = room = { st, S, grid, W, H, ox, oz, cpos, guards: [], cams: [], lines: [], doors: [], gates: [], terms: [], resolve, start: null, exit: null, art: null, hasArt: false, cooldown: 0, busy: false, time: st.time || 0, t: 0, bolts: [], zz: [] };
+    const R = room = { st, S, grid, W, H, ox, oz, cpos, guards: [], cams: [], lines: [], doors: [], gates: [], terms: [], resolve, start: null, exit: null, art: null, hasArt: false, cooldown: 0, busy: false, time: st.time || 0, t: 0, fx: [], zz: [] };
     // floor and walls (instanced cubes: stand-ins until the location kits arrive from Blender)
     const floorM = new THREE.MeshStandardMaterial({ color: th.floor, roughness: .45, metalness: .3 }), wallM = new THREE.MeshStandardMaterial({ color: new THREE.Color(th.wall).multiplyScalar(.75), roughness: .7, metalness: .2 });
     const cells = [], walls = [];
@@ -700,6 +805,18 @@ function playRoom(st) {
       S.add(beams); R.lines.push({ z, x0, x1, blink: ln.blink, on: true, beams, phase: rand(0, 2) });
     }
     R.lines.sort((a, b) => Math.abs(b.z - R.start.z) - Math.abs(a.z - R.start.z)).reverse();   // nearest to the start first
+    // every guard and camera gets an alert meter: a "!" over it that fills (yellow, then red) while it can see Foxino
+    for (const G of R.guards) { G.alert = 0; G.pause = 0; G.bangY = 2.15; G.bang = textSprite('!', '#ffffff', .5); G.bang.position.y = G.bangY; G.bang.visible = false; G.g.add(G.bang); G.coneC = G.cone.material.color.clone(); G.coneA = G.cone.material.opacity; }
+    for (const C of R.cams) { C.alert = 0; C.off = 0; C.bangY = 3.3; C.bang = textSprite('!', '#ffffff', .5); C.bang.position.copy(C.p).setY(C.bangY); C.bang.visible = false; S.add(C.bang); C.coneC = C.cone.material.color.clone(); C.coneA = C.cone.material.opacity;
+      C.zz = textSprite('Zzz', '#9ff3ff', .35); C.zz.position.copy(C.p).setY(3.2); C.zz.visible = false; S.add(C.zz); }
+    // the sight cones are cut where a wall, crate or shut door blocks the view (behind a block you are safe, and you can see it)
+    for (const W of [...R.guards, ...R.cams]) { W.cone.geometry.dispose(); W.cone.geometry = fanGeo(FAN_SEGS); W.cone.position.set(0, 0, 0); W.cone.rotation.set(0, 0, 0); W.cone.frustumCulled = false; }
+    for (const G of R.guards) fanUpdate(R, G.cone, G.g.position, G.g.rotation.y, G.half, G.len, .03);
+    for (const C of R.cams) fanUpdate(R, C.cone, C.p, C.a0, C.half, C.len, .04);
+    // the taser's reach: a faint ring round Foxino
+    R.range = new THREE.Mesh(new THREE.RingGeometry(TASER_R - .06, TASER_R, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#7af8ff', transparent: true, opacity: .12, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })); S.add(R.range);
+    // the navigator: glowing arrows on the floor from Foxino to what he has to do next
+    navInit(R);
     // Foxino
     R.fox = makeFoxino(); S.add(R.fox.root); R.shadow = blobShadow(.45); S.add(R.shadow);
     R.pos = R.start.clone(); R.face = Math.PI; R.fox.root.position.copy(R.pos); R.fox.root.rotation.y = R.face;
@@ -727,20 +844,20 @@ function rigged(src, h) {
 }
 function makeGuard(p, axis, S) {
   if (A.bot) { const g = new THREE.Group(), rg = rigged(A.bot, 1.6); g.add(rg.inner); rg.play('walk', 0);
-    const half = THREE.MathUtils.degToRad(30), len = 5;
+    const half = THREE.MathUtils.degToRad(28), len = 4.4;
     const cone = new THREE.Mesh(new THREE.CircleGeometry(len, 20, -Math.PI / 2 - half, half * 2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: .22, depthWrite: false, toneMapped: false })); cone.position.y = .03;
     g.position.copy(p); S.add(g); S.add(cone); const zz = textSprite('Zzz', '#9ff3ff', .35); zz.visible = false; zz.position.y = 2; g.add(zz); const sh = blobShadow(.4); g.add(sh);
-    return { g, cone, zz, dir: axis.clone(), sleep: 0, half, len, speed: 1.5, bob: rand(0, 6), rg }; }
+    return { g, cone, zz, dir: axis.clone(), sleep: 0, half, len, speed: 1.15, bob: rand(0, 6), rg }; }
   // a Bolt-Bot stand-in: round white body, dark visor, cyan eyes, a torch
   const g = new THREE.Group(); const body = new THREE.Mesh(new THREE.CapsuleGeometry(.34, .5, 6, 16), new THREE.MeshStandardMaterial({ color: '#e9eef8', metalness: .3, roughness: .35 })); body.position.y = .62; g.add(body);
   const head = new THREE.Mesh(new THREE.SphereGeometry(.3, 20, 14), body.material); head.position.y = 1.25; g.add(head);
   const visor = new THREE.Mesh(new THREE.SphereGeometry(.26, 20, 12, -Math.PI / 2.6, Math.PI / 1.3, Math.PI / 3.2, Math.PI / 2.6), new THREE.MeshStandardMaterial({ color: '#101828', metalness: .6, roughness: .2 })); visor.position.y = 1.25; visor.position.z = .05; g.add(visor);
   for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(.035, 8, 6), neon('#5ff3ff')); e.position.set(s * .09, 1.28, .3); g.add(e); }
   const ant = new THREE.Mesh(new THREE.CylinderGeometry(.012, .012, .25, 6), neon('#ff6ec7')); ant.position.y = 1.62; g.add(ant);
-  const half = THREE.MathUtils.degToRad(30), len = 5;
+  const half = THREE.MathUtils.degToRad(28), len = 4.4;
   const cone = new THREE.Mesh(new THREE.CircleGeometry(len, 20, -Math.PI / 2 - half, half * 2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffe27a', transparent: true, opacity: .22, depthWrite: false, toneMapped: false })); cone.position.y = .03;
   g.position.copy(p); S.add(g); S.add(cone); const zz = textSprite('Zzz', '#9ff3ff', .35); zz.visible = false; zz.position.y = 2; g.add(zz);
-  return { g, cone, zz, dir: axis.clone(), sleep: 0, half, len, speed: 1.5, bob: rand(0, 6) };
+  return { g, cone, zz, dir: axis.clone(), sleep: 0, half, len, speed: 1.15, bob: rand(0, 6) };
 }
 function makeCam(p, S, th) {
   if (A.secam) { const g = A.secam.scene.clone(true); dress(g); g.position.copy(p); S.add(g); const head = g.getObjectByName('Head') || g;
@@ -785,6 +902,7 @@ function roomFrame(dt, t) {
   const P = camera.aspect < .9, narrow = R.W <= 7, want = R.pos.clone().add(new THREE.Vector3(0, P ? (narrow ? 10 : 12.5) : 9.5, P ? (narrow ? 1.2 : 3.6) : 4.2)); R.camPos.lerp(want, Math.min(1, dt * (R.t < 1.4 ? 2.2 : 4))); camera.position.copy(R.camPos); camera.lookAt(R.pos.x, .3, R.pos.z + (P ? (narrow ? -1.6 : 1.2) : -.5));   // (tall screens: Foxino a little above the middle, the controls cover the bottom)
   if (R.foxLight) R.foxLight.position.set(R.pos.x, 2.4, R.pos.z + .6); if (R.motes) R.motes.material.uniforms.uTime.value = t; if (R.exitBeam) R.exitBeam.material.uniforms.uTime.value = t;
   if (R.camLock) { camera.position.copy(R.camLock.p); camera.lookAt(R.camLock.l); }   // (test hook: a fixed close-up)
+  fxFrame(R, dt); navFrame(R, dt, t);
   // exit
   if (R.exit) { const locked = R.hasArt && !R.art.taken; R.exit.ring.material.color.set(locked ? '#ff3a5a' : mission.m.theme.trim); R.exit.ring.rotation.y += dt; R.exit.glow.material.opacity = .5 + Math.sin(t * 4) * .3;
     if (!paused && !locked && R.pos.distanceTo(R.exit.p) < .9) { roomDone(); return; } }
@@ -807,42 +925,124 @@ function roomFrame(dt, t) {
     const active = ln.on && (!ln.blink || ((R.t + ln.phase) % 2.6) < 1.5); ln.beams.visible = active || (ln.on && ln.blink && Math.floor(R.t * 8) % 2 === 0 && ((R.t + ln.phase) % 2.6) > 2.3);
     if (active && Math.abs(R.pos.z - ln.z) < .35 && R.pos.x > ln.x0 && R.pos.x < ln.x1) { spotted('LASER!'); return; }
   }
-  // guards
+  // guards: they stop at each end and look round slowly; seeing Foxino fills their alert meter (the "!") before they call it
   for (const G of R.guards) {
     if (G.rg) G.rg.mixer.update(dt);
-    if (G.sleep > 0) { G.sleep -= dt; G.zz.visible = true; G.zz.position.y = 2 + Math.sin(t * 3) * .1; G.cone.visible = false; if (G.rg) G.rg.play('sleep'); else G.g.rotation.z = .25; if (G.sleep <= 0) { G.zz.visible = false; G.g.rotation.z = 0; G.cone.visible = true; if (G.rg) G.rg.play('walk'); } continue; }
-    const nx = G.g.position.x + G.dir.x * G.speed * dt, nz = G.g.position.z + G.dir.z * G.speed * dt;
-    if (solid(R, nx + G.dir.x * .5, nz + G.dir.z * .5, .3)) G.dir.multiplyScalar(-1); else G.g.position.set(nx, 0, nz);
-    const ang = Math.atan2(G.dir.x, G.dir.z); G.g.rotation.y += Math.atan2(Math.sin(ang - G.g.rotation.y), Math.cos(ang - G.g.rotation.y)) * Math.min(1, dt * 6);
-    G.g.position.y = G.rg ? 0 : Math.abs(Math.sin(t * 6 + G.bob)) * .05; G.cone.position.set(G.g.position.x, .03, G.g.position.z); G.cone.rotation.y = G.g.rotation.y;
-    const eye = G.g.position.clone().setY(0); if (sees(R, eye, G.g.rotation.y, G.half, G.len, R.pos)) { spotted('SPOTTED!'); return; }
+    if (G.sleep > 0) { G.sleep -= dt; G.alert = 0; G.bang.visible = false; G.zz.visible = true; G.zz.position.y = 2 + Math.sin(t * 3) * .1; G.cone.visible = false; if (G.rg) G.rg.play('sleep'); else G.g.rotation.z = .25; if (G.sleep <= 0) { G.zz.visible = false; G.g.rotation.z = 0; G.cone.visible = true; if (G.rg) G.rg.play('wake', .2, true); G.pause = 1.2; } continue; }
+    if (G.pause > 0) { G.pause -= dt; if (G.rg && G.pause < .9) G.rg.play('look', .3); }
+    else { const nx = G.g.position.x + G.dir.x * G.speed * dt, nz = G.g.position.z + G.dir.z * G.speed * dt;
+      if (solid(R, nx + G.dir.x * .5, nz + G.dir.z * .5, .3)) { G.dir.multiplyScalar(-1); G.pause = 1.4; } else { G.g.position.set(nx, 0, nz); if (G.rg) G.rg.play('walk', .3); } }
+    const ang = Math.atan2(G.dir.x, G.dir.z); G.g.rotation.y += Math.atan2(Math.sin(ang - G.g.rotation.y), Math.cos(ang - G.g.rotation.y)) * Math.min(1, dt * (G.pause > 0 ? 1.5 : 3));
+    G.g.position.y = G.rg ? 0 : Math.abs(Math.sin(t * 6 + G.bob)) * .05; fanUpdate(R, G.cone, G.g.position, G.g.rotation.y, G.half, G.len, .03);
+    const eye = G.g.position.clone().setY(0); if (watch(G, sees(R, eye, G.g.rotation.y, G.half, G.len, R.pos), eye.distanceTo(R.pos) / G.len, dt, t)) { spotted('SPOTTED!'); return; }
   }
-  for (const C of R.cams) { C.t += dt; const a = C.a0 + Math.sin(C.t * .6) * C.sweep; C.cam.rotation.y = a; C.cone.rotation.y = a; if (sees(R, C.p, a, C.half, C.len, R.pos)) { spotted('CAMERA!'); return; } }
-  // stun bolts
-  R.cooldown = Math.max(0, R.cooldown - dt); $('stunFill').style.height = (R.cooldown / 3.2 * 100) + '%';
-  for (const b of R.bolts) { b.life -= dt; b.mesh.position.addScaledVector(b.v, dt); const hit = R.guards.find((G) => G.sleep <= 0 && G.g.position.distanceTo(b.mesh.position.clone().setY(0)) < .7); if (hit) { hit.sleep = 6; b.life = 0; SFX.right(); toast('ZZZ…', 'info', 700); } if (blocked(R, b.mesh.position.x, b.mesh.position.z)) b.life = 0; if (b.life <= 0) R.S.remove(b.mesh); }
-  R.bolts = R.bolts.filter((b) => b.life > 0);
+  for (const C of R.cams) { C.t += dt;
+    if (C.off > 0) { C.off -= dt; C.cone.visible = false; C.alert = 0; C.bang.visible = false; C.zz.visible = true; C.zz.position.y = 3.2 + Math.sin(t * 3) * .08; if (C.off <= 0) { C.cone.visible = true; C.zz.visible = false; } continue; }
+    const a = C.a0 + Math.sin(C.t * .45) * C.sweep; C.cam.rotation.y = a; fanUpdate(R, C.cone, C.p, a, C.half, C.len, .04);
+    if (watch(C, sees(R, C.p, a, C.half, C.len, R.pos), C.p.distanceTo(R.pos) / C.len, dt, t)) { spotted('CAMERA!'); return; } }
+  // the taser: its cooldown, the shock rings, and the range ring round Foxino (bright when a guard is close enough to zap)
+  R.cooldown = Math.max(0, R.cooldown - dt); $('stunFill').style.height = (R.cooldown / TASER_CD * 100) + '%';
+  const inReach = R.cooldown <= 0 && (R.guards.some((G) => G.sleep <= 0 && G.g.position.distanceTo(R.pos) < TASER_R) || R.cams.some((C) => C.off <= 0 && C.p.distanceTo(R.pos) < TASER_R + .6));
+  R.range.position.set(R.pos.x, .05, R.pos.z); R.range.material.opacity = inReach ? .45 + Math.sin(t * 9) * .2 : (R.cooldown > 0 ? .04 : .12); R.range.rotation.y += dt * .4;
+  $('btnStun').classList.toggle('ready', inReach);
 }
+function fxFrame(R, dt) {
+  for (const f of R.fx) { f.t += dt; const k = f.t / f.d;
+    f.ring.scale.setScalar(.3 + k * TASER_R); f.ring.material.opacity = Math.max(0, 1 - k) * .9; f.dome.scale.setScalar(.3 + k * TASER_R); f.dome.material.opacity = Math.max(0, 1 - k) * .35; f.glow.material.opacity = Math.max(0, 1 - k * 1.6);
+    for (const a of f.arcs) { a.material.opacity = Math.max(0, 1 - k * 1.3); if (Math.random() < .5) zigzag(a, f.from, a.userData.to); }
+    if (k >= 1) { R.S.remove(f.ring, f.dome, f.glow, ...f.arcs); } }
+  R.fx = R.fx.filter((f) => f.t < f.d);
+}
+// one watcher (guard or camera): the alert meter fills while it sees Foxino (faster when he is close) and empties when it does not
+function watch(W, see, near, dt, t) {
+  const was = W.alert; W.alert = clamp(W.alert + (see ? dt / (.55 + .85 * clamp(near, 0, 1)) : -dt * .8), 0, 1);
+  if (see && was === 0) tone(740, .09, 'square', .035);
+  const k = W.alert; W.bang.visible = k > .01; W.bang.material.opacity = .35 + .65 * k; W.bang.scale.set(.3 + .25 * k, .3 + .25 * k, 1); W.bang.material.color.set(k > .6 ? '#ff4a5a' : '#ffd23a');
+  if (see) W.bang.position.y = W.bangY + Math.sin(t * 14) * .04 * k;
+  W.cone.material.color.copy(W.coneC).lerp(ALERT_C, k); W.cone.material.opacity = W.coneA + k * .25;
+  return W.alert >= 1;
+}
+const FAN_SEGS = 30;
+function fanGeo(n) { const g = new THREE.BufferGeometry(), idx = []; g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((n + 2) * 3), 3)); for (let i = 0; i < n; i++) idx.push(0, i + 1, i + 2); g.setIndex(idx); return g; }
+const viewStop = (R, x, z) => { const ch = cellAt(R, x, z); return ch === '#' || ch === ' ' || ch === 'o' || (ch === 'D' && blocked(R, x, z)); };
+function fanUpdate(R, mesh, from, ang, half, len, y) {
+  const p = mesh.geometry.attributes.position, n = p.count - 2; p.setXYZ(0, from.x, y, from.z);
+  for (let i = 0; i <= n; i++) { const a = ang - half + 2 * half * i / n, dx = Math.sin(a), dz = Math.cos(a); let d = .15;
+    while (d < len && !viewStop(R, from.x + dx * d, from.z + dz * d)) d += .1;
+    d = Math.min(d, len); p.setXYZ(i + 1, from.x + dx * d, y, from.z + dz * d); }
+  p.needsUpdate = true;
+}
+const ALERT_C = new THREE.Color('#ff2e4d'), TASER_R = 3.4, TASER_CD = 2.6;
+function zigzag(line, a, b) { const p = line.geometry.attributes.position, n = p.count; for (let i = 0; i < n; i++) { const t = i / (n - 1), j = i === 0 || i === n - 1 ? 0 : .22; p.setXYZ(i, lerp(a.x, b.x, t) + rand(-j, j), lerp(a.y, b.y, t) + rand(-j, j), lerp(a.z, b.z, t) + rand(-j, j)); } p.needsUpdate = true; }
+// the navigator: a path of arrows on the floor (like a satnav) to the next goal: the terminal while a door or the lasers
+// are still on, then the artifact, then the exit. It is found with a breadth-first search over the room's grid.
+const CHEV = (() => { const sh = new THREE.Shape(); sh.moveTo(0, .26); sh.lineTo(.26, .02); sh.lineTo(.26, -.12); sh.lineTo(0, .12); sh.lineTo(-.26, -.12); sh.lineTo(-.26, .02); sh.closePath(); return new THREE.ShapeGeometry(sh).rotateX(Math.PI / 2); })();
+function navInit(R) {
+  const th = mission.m.theme, n = 90;
+  const mesh = new THREE.InstancedMesh(CHEV, new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }), n);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.frustumCulled = false; mesh.count = 0; for (let i = 0; i < n; i++) mesh.setColorAt(i, new THREE.Color(0)); R.S.add(mesh);
+  const marker = new THREE.Group(), cone = new THREE.Mesh(new THREE.ConeGeometry(.22, .45, 4).rotateX(Math.PI), neon(th.trim)); marker.add(cone); const mg = glowSprite(th.trim, 1.1); mg.material.opacity = .6; marker.add(mg); R.S.add(marker);
+  R.nav = { mesh, n, marker, pts: [], tCalc: 0, col: new THREE.Color(th.trim).multiplyScalar(BLOOM ? 1.15 : 1), goal: null };
+}
+const navOpen = (R, c, r) => { const ch = (R.grid[r] || [])[c]; if (ch === undefined || ch === '#' || ch === ' ' || ch === 'o') return false; if (ch === 'D') { const d = R.doors.find((d) => d.c === c && d.r === r); return !d || d.open; } return true; };
+function navPath(R, from, goals) {
+  const [c0, r0] = cellRC(R, from.x, from.z), key = (c, r) => r * R.W + c, prev = new Map([[key(c0, r0), -1]]), q = [[c0, r0]], want = new Map(goals.map((g) => [key(...cellRC(R, g.x, g.z)), g]));
+  while (q.length) { const [c, r] = q.shift(), k = key(c, r);
+    if (want.has(k)) { const path = []; let x = k; while (x !== -1) { path.push(R.cpos(x % R.W, Math.floor(x / R.W))); x = prev.get(x); } path.reverse(); return { goal: want.get(k), path }; }
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nc = c + dc, nr = r + dr, nk = key(nc, nr); if (prev.has(nk) || !navOpen(R, nc, nr)) continue; prev.set(nk, k); q.push([nc, nr]); } }
+  return null;
+}
+function navFrame(R, dt, t) {
+  const N = R.nav; if (!N) return; N.tCalc -= dt;
+  if (N.tCalc <= 0) { N.tCalc = .25;
+    const terms = R.terms.filter((x) => !x.used).map((x) => x.p), main = R.art && !R.art.taken ? [R.art.p] : (R.exit ? [R.exit.p] : []);
+    const lasersOn = R.lines.some((l) => l.on && !l.blink);
+    let res = (terms.length && lasersOn ? navPath(R, R.pos, terms) : null) || navPath(R, R.pos, main) || (terms.length ? navPath(R, R.pos, terms) : null);
+    N.goal = res ? res.goal : null; N.pts = res ? [R.pos.clone(), ...res.path.slice(1)] : [];
+    if (N.pts.length > 2 && N.pts[2].distanceTo(R.pos) < N.pts[2].distanceTo(N.pts[1])) N.pts.splice(1, 1);   // (no step back to the middle of the cell he is already leaving)
+  }
+  if (N.pts.length) N.pts[0].copy(R.pos);
+  // arrows every .8 m, flowing forward, fading in near Foxino and out near the goal
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3(), pos = new THREE.Vector3(), col = new THREE.Color();
+  let L = 0; const seg = []; for (let i = 1; i < N.pts.length; i++) { const d = N.pts[i].distanceTo(N.pts[i - 1]); seg.push(d); L += d; }
+  const near = N.goal ? Math.min(R.pos.distanceTo(N.goal), 99) : 99, sp = .8, end = L - (N.goal && R.terms.some((x) => x.p === N.goal) ? 1.1 : .5);
+  let k = 0;
+  for (let s = .7 + (t * 1.5) % sp; s < end && k < N.n; s += sp) {
+    let i = 0, a = s; while (i < seg.length - 1 && a > seg[i]) { a -= seg[i]; i++; }
+    const p0 = N.pts[i], p1 = N.pts[i + 1], f = clamp(a / Math.max(.001, seg[i]), 0, 1); pos.lerpVectors(p0, p1, f).setY(.07);
+    q.setFromAxisAngle(up, Math.atan2(p1.x - p0.x, p1.z - p0.z)); const fade = clamp((s - .7) / 1.2, 0, 1) * clamp((end - s) / .8, 0, 1) * clamp(1 - (s - 7) / 5, 0, 1);
+    sc.setScalar(.9 + .12 * Math.sin(t * 6 - s * 2)); m4.compose(pos, q, sc); N.mesh.setMatrixAt(k, m4); N.mesh.setColorAt(k, col.copy(N.col).multiplyScalar(fade * .85)); k++;
+  }
+  N.mesh.count = k; N.mesh.instanceMatrix.needsUpdate = true; if (N.mesh.instanceColor) N.mesh.instanceColor.needsUpdate = true;
+  N.marker.visible = !!N.goal && near > 1.2; if (N.goal) { N.marker.position.copy(N.goal).setY(2.3 + Math.sin(t * 3.5) * .15); N.marker.rotation.y += dt * 2; }
+}
+// the taser: a shock wave all round Foxino. Every Bolt-Bot inside it falls asleep (Zzz) and every camera blacks out for a while
 function stun() {
-  const R = room; if (!R || R.cooldown > 0 || anyOverlay()) return; R.cooldown = 3.2; SFX.stun();
-  const dir = new THREE.Vector3(Math.sin(R.face), 0, Math.cos(R.face)), m = glowSprite('#ff6ec7', .7); m.position.copy(R.pos).setY(.9).addScaledVector(dir, .6); R.S.add(m); R.bolts.push({ mesh: m, v: dir.multiplyScalar(16), life: .6 });
-  if (R.fox.hasClips) { R.fox.play('aim', .1); setTimeout(() => R.fox && R.fox.play('idle'), 350); }
+  const R = room; if (!R || R.cooldown > 0 || anyOverlay() || R.busy || R.done) return; R.cooldown = TASER_CD; SFX.stun(); tone(90, .35, 'sawtooth', .05, 0, 60);
+  const c = '#7af8ff', from = R.pos.clone().setY(.9);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(.92, 1, 72).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide })); ring.position.copy(R.pos).setY(.08);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 36, 14, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide, wireframe: true })); dome.position.copy(R.pos);
+  const glow = glowSprite('#bff8ff', 3.2); glow.position.copy(from); R.S.add(ring, dome, glow);
+  const arcs = []; let n = 0;
+  const zap = (to) => { const l = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(10 * 3), 3)), new THREE.LineBasicMaterial({ color: '#d8fbff', transparent: true, toneMapped: false })); l.userData.to = to; l.frustumCulled = false; zigzag(l, from, to); R.S.add(l); arcs.push(l); n++; };
+  for (const G of R.guards) if (G.sleep <= 0 && G.g.position.distanceTo(R.pos) < TASER_R) { G.sleep = Infinity; G.alert = 0; zap(G.g.position.clone().setY(1)); }
+  for (const C of R.cams) if (C.off <= 0 && C.p.distanceTo(R.pos) < TASER_R + .6) { C.off = Infinity; C.alert = 0; zap(C.p.clone().setY(2.5)); }
+  R.fx.push({ t: 0, d: .55, ring, dome, glow, arcs, from });
+  flash(n ? 'zap' : ''); toast(n ? (n > 1 ? `ZAP! ×${n}  Out for good · Zzz…` : 'ZAP!  Out for good · Zzz…') : 'Too far: get closer to a guard', n ? 'ok' : 'info', n ? 900 : 1100);
+  if (R.fox.hasClips) { R.fox.manual = true; R.fox.play('aim', .1); setTimeout(() => { if (R.fox) R.fox.manual = false; }, 380); }
 }
 async function use() {
   const R = room; if (!R || R.busy || anyOverlay()) return; const term = R.terms.find((x) => R.pos.distanceTo(x.p) < 1.7 && !x.used); if (!term) return;
   R.busy = true; SFX.click();
+  const th = mission.m.theme;
   if (R.st.type === 'lasers') {
     const left = R.lines.filter((l) => l.on && !l.blink);
-    while (left.some((l) => l.on)) {
-      const vis = () => `<div class="lasers">${R.lines.filter((l) => !l.blink).map((l) => `<span class="${l.on ? '' : 'off'}"></span>`).join('')}</div>`;
-      const ok = await ask({ kicker: 'LASER CONTROL', title: 'Each right answer switches off one laser line.', visual: vis });
-      if (ok) { const l = left.find((l) => l.on); l.on = false; l.beams.visible = false; SFX.door(); }
-      else { for (const l of left) if (l.on) l.phase += .5; }
-    }
+    if (left.length) await hackSession({ kicker: 'LASER CONTROL', title: 'Each breached node switches off one laser line', file: `magpie://${mission.m.id}/laser-grid`, n: left.length, labels: left.map((_, k) => `LASER ${k + 1}`), color: '#ff4a6a',
+      onRight: () => { const l = left.find((l) => l.on); if (l) { l.on = false; l.beams.visible = false; SFX.door(); } }, onWrong: () => { for (const l of left) if (l.on) l.phase += .5; } });
     if (R.lines.some((l) => l.blink)) toast('WATCH THE BLINKING LASERS!', 'info', 1600); else toast('LASERS OFF', 'ok');
     term.used = true;
   } else {
-    await askUntilRight({ kicker: 'DOOR TERMINAL', title: 'Answer to unlock the door.' });
+    await hackSession({ kicker: 'DOOR TERMINAL', title: 'Hack the lock to open the door', file: `magpie://${mission.m.id}/door-lock`, n: 1, labels: ['DOOR LOCK'], color: th.trim });
     const d = R.doors.filter((d) => !d.open).sort((a, b) => R.cpos(a.c, a.r).distanceTo(term.p) - R.cpos(b.c, b.r).distanceTo(term.p))[0];
     if (d) { d.open = true; SFX.door(); toast('DOOR OPEN', 'ok'); } term.used = true;
   }
@@ -856,7 +1056,7 @@ async function gateQuestion(g) {
 function spotted(why) {
   const R = room; mission.stats.spotted++; $('hudSpotted').textContent = mission.stats.spotted; SFX.alarm(); flash('red'); toast(why, 'bad', 1100);
   R.pos.copy(R.start); R.camPos.copy(R.pos).add(new THREE.Vector3(0, 9.5, 4.2));
-  for (const G of R.guards) G.sleep = 0;
+  for (const W of [...R.guards, ...R.cams]) { W.alert = 0; W.bang.visible = false; }   // (zapped guards stay asleep)
 }
 function failRoom(why) { toast(why, 'bad', 1500); SFX.alarm(); const R = room; room = null; mode = 'hq'; setTimeout(() => R.resolve(false), 1200); }
 function roomDone() {
@@ -906,5 +1106,5 @@ function frame(now) {
 }
 (async () => {
   await loadAssets(); buildHQ(); window.__hqReady = true; mode = 'hq'; $('loading').classList.add('out'); setTimeout(() => $('loading').classList.remove('show', 'out'), 700); document.body.classList.toggle('portrait', PORTRAIT()); document.body.dataset.view = 'center'; setTimeout(() => showScreen('hq'), 1400); updateHQText(); requestAnimationFrame(frame);
-  window.FS = { THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
+  window.FS = { hackSession, HQ_FOX, placeHQFox, computeViews, THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
 })();

@@ -8,7 +8,7 @@
 <link rel="icon" href="/favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Exo+2:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -78,7 +78,7 @@
   <div id="joy"><i id="joyKnob"></i></div>
   <div class="hud-btns">
     <button class="act" id="btnUse"><span>USE</span></button>
-    <button class="act stun" id="btnStun"><span>STUN</span><i id="stunFill"></i></button>
+    <button class="act stun" id="btnStun"><span>ZAP</span><i id="stunFill"></i></button>
   </div>
   <div class="keys">WASD / arrows: move · Space: stun · E: use</div>
 </div>
@@ -92,6 +92,20 @@
     <div class="g-opts" id="qOpts"></div>
     <div class="g-feedback" id="qFeedback"></div>
   </div>
+</div>
+
+<!-- the hacking terminal (decoder, door terminals, laser control): full screen -->
+<div id="hack" class="overlay">
+  <canvas id="hkRain"></canvas>
+  <div class="hk" id="hk">
+    <div class="hk-top"><div><i id="hkKicker">SYSTEM BREACH</i><b id="hkTitle">Hack the Magpie's network</b></div><span id="hkProg">0 / 4</span></div>
+    <div class="hk-net" id="hkNet"></div>
+    <div class="hk-term"><div class="hk-bar"><span></span><span></span><span></span><em id="hkFile">magpie://message.enc</em></div><p class="hk-intro" id="hkIntro"></p><div class="hk-lines" id="hkLines"></div></div>
+    <div class="hk-help" id="hkHelp">Tap the right data chip to inject it into the gap</div>
+    <div class="hk-opts" id="hkOpts"></div>
+    <div class="hk-fb" id="hkFb"></div>
+  </div>
+  <div class="hk-stamp" id="hkStamp">ACCESS GRANTED</div>
 </div>
 
 <!-- briefing / story -->
@@ -147,6 +161,6 @@
 
 <script src="packages.js?v=1"></script>
 <script src="/shared/pack-picker.js?v=8"></script>
-<script type="module" src="game.js?v=10"></script>
+<script type="module" src="game.js?v=11"></script>
 </body>
 </html>

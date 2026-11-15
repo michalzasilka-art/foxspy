@@ -7,8 +7,8 @@
 //   D  locked door      =  laser line (switched off by a terminal answer)     *  blinking laser (time it)
 //   o  crate (blocks the way and the guards' view)                         A  the artifact on its pedestal
 //   G  gate: a quick question to pass (escape rooms)
-// Everything that matters is answered with the chosen content package; nobody is ever hurt (the stun laser makes
-// a Bolt-Bot sleep for a few seconds).
+// Everything that matters is answered with the chosen content package; nobody is ever hurt (the taser makes
+// every Bolt-Bot close by fall asleep, and they sleep for the rest of the room).
 
 export const MISSIONS = [
   {
@@ -17,7 +17,7 @@ export const MISSIONS = [
     theme: { floor: '#2c2f4a', wall: '#3f4570', trim: '#7ad7ff', accent: '#ffd36e', light: '#9fc4ff', fog: '#10132a' },
     story: 'The Magpie is going to swap the famous Moon Diamond for a glass fake during tonight\'s gala. Get in through the roof, pass the laser hall, open the display vault and put the real diamond back before midnight!',
     stages: [
-      { type: 'brief', scene: 'laugh', title: 'Incoming call from HQ', text: 'Good evening, Agent Foxino. The Magpie\'s Bolt-Bots are patrolling the museum. Stay out of their torch beams and the camera cones. Your stun laser makes a Bolt-Bot sleep for a few seconds. Ready?' },
+      { type: 'brief', scene: 'laugh', title: 'Incoming call from HQ', text: 'Good evening, Agent Foxino. The Magpie\'s Bolt-Bots are patrolling the museum. Stay out of their torch beams and the camera cones. Your taser sends a shock wave all round you: every Bolt-Bot close by falls fast asleep. The glowing arrows on the floor show you the way. Ready?' },
       { type: 'sneak', title: 'The Painting Gallery', goal: 'Sneak to the stairs. Avoid the torch beams.', map: [
         '##############',
         '#S...#.......#',
@@ -90,7 +90,7 @@ export const MISSIONS = [
         '#..T..#',
         '#..S..#',
         '#######'] },
-      { type: 'sneak', title: 'The Robot Workshop', goal: 'Get past the workshop. Stun a Bolt-Bot if you have to.', map: [
+      { type: 'sneak', title: 'The Robot Workshop', goal: 'Get past the workshop. Get close and ZAP the Bolt-Bots to sleep.', map: [
         '###############',
         '#S...#...h....#',
         '#....#........#',
