@@ -407,17 +407,19 @@ const llDir = (lat, lon) => { const la = THREE.MathUtils.degToRad(lat), lo = THR
 const MAP = { s: .4, lat0: -58, lat1: 84 };
 const mapLocal = (lat, lon, y = 0) => new THREE.Vector3(lon / 45, y, -lat / 45);
 function mapPos(lat, lon, y = 0) { return HQ.mapG.localToWorld(mapLocal(lat, lon, y)); }
-const landMat = () => new THREE.ShaderMaterial({ vertexColors: true, transparent: true, toneMapped: false, extensions: { derivatives: true },
+// the land: solid white, faceted like a porcelain model, softly shaded, with a faint cyan rim and the scan line passing over it
+const landMat = () => new THREE.ShaderMaterial({ vertexColors: true, toneMapped: false, extensions: { derivatives: true },
   uniforms: { uTime: { value: 0 }, uScan: { value: 0 }, uB: { value: 1 } },
-  vertexShader: `varying vec3 vC, vW; varying float vH; void main(){ vC = color; vH = position.y; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
-  fragmentShader: `uniform float uTime, uScan, uB; varying vec3 vC, vW; varying float vH;
+  vertexShader: `varying vec3 vW; varying float vH; void main(){ vH = position.y; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `uniform float uTime, uScan, uB; varying vec3 vW; varying float vH;
     void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -n;
-      float dif = clamp(dot(n, normalize(vec3(-.35, 1.0, .45))), 0.0, 1.0), rim = pow(1.0 - n.y, 2.0);
-      vec3 c = vC * (.32 + .85 * dif) * uB;
-      float cl = smoothstep(.9, 1.0, fract(vH * 26.0)) * step(.05, vH) * .22;            // contour lines on the mountains
-      float sw = exp(-pow((vW.x - uScan) * 7.0, 2.0));                                    // the scan sweep
-      c += vec3(.37, .95, 1.0) * (cl + sw * .55 + rim * .35);
-      gl_FragColor = vec4(c, .95); }` });
+      float key = clamp(dot(n, normalize(vec3(-.4, 1.0, .5))), 0.0, 1.0), fill = clamp(dot(n, normalize(vec3(.6, .5, -.4))), 0.0, 1.0);
+      float facet = fract(sin(dot(floor(n * 40.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453) * .06 - .03;   // a little life in each facet
+      vec3 shade = mix(vec3(.44, .5, .6), vec3(.84, .86, .9), key) + vec3(.04, .05, .07) * fill + facet;   // cool shadows, white lit faces
+      shade *= .9 + .1 * smoothstep(.0, .12, vH);                                                      // coasts a touch deeper than the peaks
+      float rim = pow(1.0 - n.y, 3.0), sw = exp(-pow((vW.x - uScan) * 7.0, 2.0));
+      vec3 c = shade * uB + vec3(.3, .8, 1.0) * (rim * .18 + sw * .16);
+      gl_FragColor = vec4(min(c, vec3(.9)), 1.0); }` });
 const oceanMat = (vc) => new THREE.ShaderMaterial({ vertexColors: vc, transparent: true, depthWrite: false, toneMapped: false,
   uniforms: { uTime: { value: 0 }, uScan: { value: 0 } },
   vertexShader: `varying vec3 vL, vW, vC; void main(){ vL = position; ${vc ? 'vC = color;' : 'vC = vec3(1.0);'} vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
