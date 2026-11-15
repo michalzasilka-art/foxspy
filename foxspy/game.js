@@ -95,7 +95,7 @@ function dress(root) {
     if (Array.isArray(o.material)) o.material = o.material.map((m) => (m && /glow/i.test(m.name) ? glowOf(m) : m));
     else if (o.material && /glow/i.test(o.material.name)) o.material = glowOf(o.material);
     for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.isMeshStandardMaterial) m.envMapIntensity = .6;
-    if (/glass/i.test(o.name)) { o.material = new THREE.MeshPhysicalMaterial({ color: '#bfefff', transparent: true, opacity: .16, roughness: .05, metalness: 0, transmission: 0, depthWrite: false, side: THREE.DoubleSide }); o.renderOrder = 5; }
+    if (/glass/i.test(o.name)) { o.material = new THREE.MeshPhysicalMaterial({ color: '#bfefff', transparent: true, opacity: .14, roughness: .35, metalness: 0, transmission: 0, specularIntensity: .4, depthWrite: false, side: THREE.DoubleSide }); o.renderOrder = 5; }
   });
   return root;
 }
@@ -270,17 +270,19 @@ HQ.scene.background = new THREE.Color('#040814'); HQ.scene.fog = new THREE.Fog('
 const PORTRAIT = () => camera.aspect < .9;
 function buildHQ() {
   const S = HQ.scene;
-  const hemi = new THREE.HemisphereLight('#7fb6ff', '#140a2a', .75); S.add(hemi);
+  const hemi = new THREE.HemisphereLight('#c6dcff', '#2a2240', 1.2); S.add(hemi);
+  const top = new THREE.DirectionalLight('#f2f7ff', .8); top.position.set(1.5, 8, 4); S.add(top, top.target);
+  const lamps = [[-4, 3.6, 2], [4, 3.6, 2], [-4, 3.6, -4], [4, 3.6, -4], [0, 3.8, 3.5]].map(([x, y, z]) => { const l = new THREE.PointLight('#eaf3ff', 12, 10, 1.4); l.position.set(x, y, z); S.add(l); return l; });
   const key = new THREE.PointLight('#7af0ff', 34, 14, 1.6); key.position.set(0, 3.4, -2); S.add(key);
   const vio = new THREE.PointLight('#b57bff', 30, 18, 1.6); vio.position.set(-5, 3, 1); S.add(vio);
   const warm = new THREE.PointLight('#ffd9a8', 20, 14, 1.6); warm.position.set(2, 3, 4); S.add(warm);
   const pnk = new THREE.PointLight('#ff6ec7', 22, 14, 1.6); pnk.position.set(5, 3, -1); S.add(pnk);
-  HQ.lights = [hemi, key, vio, warm, pnk].map((l) => ({ l, i: l.intensity })); HQ.dim = 0; HQ.glowDim = [];
+  HQ.lights = [hemi, top, key, vio, warm, pnk, ...lamps].map((l) => ({ l, i: l.intensity })); HQ.dim = 0; HQ.glowDim = [];
   let screen = null;
   if (A.room) {
     const room = dress(A.room.scene); S.add(room);
     room.traverse((o) => { const m = o.name.match(/^Pillar_(\d)/); if (m) HQ.pillars[+m[1] - 1] = o; if (o.name === 'Screen') screen = o; if (o.name === 'ProjectorTable') HQ.table = o;
-      if (o.name === 'Floor' && o.isMesh) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach((m) => { if (m.isMeshStandardMaterial) { m.metalness = .6; m.roughness = .18; } }); } });
+      if (o.isMesh) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.isMeshStandardMaterial) { m.metalness = Math.min(m.metalness, .1); m.roughness = Math.max(m.roughness, o.name === 'Floor' ? .82 : .78); } }); });   // (matte: no mirror floor)
     room.updateMatrixWorld(true);
   }
   if (HQ.pillars.length < 5 || !screen) {
@@ -315,7 +317,7 @@ function buildHQ() {
   const fp = HQ.FOX_AT = new THREE.Vector3(HQ.gc.x - 1.75, 0, HQ.gc.z + .55);
   HQ.fox = makeFoxino(false); S.add(HQ.fox.root); HQ.foxShadow = blobShadow(.45); S.add(HQ.foxShadow); placeHQFox();
   if (HQ.fox.hasClips) { HQ.fox.manual = true; HQ.fox.play(HQ_FOX.clip, 0); } HQ.foxHead = findBone(HQ.fox.inner, /Head$/); HQ.foxNeck = findBone(HQ.fox.inner, /Neck$/);
-  const rim = new THREE.SpotLight('#9ff3ff', 30, 7, .5, .6, 1.4); rim.position.set(HQ.gc.x + .3, 3.6, HQ.gc.z + .6); rim.target = HQ.fox.root; S.add(rim); HQ.rim = rim;
+  const rim = new THREE.SpotLight('#9ff3ff', 14, 7, .5, .6, 1.4); rim.position.set(HQ.gc.x + .3, 3.6, HQ.gc.z + .6); rim.target = HQ.fox.root; S.add(rim); HQ.rim = rim;
   buildGlobe(); buildNavArrows(); buildMotes(); computeViews();
   // the opening shot: from high above the hologram down to Foxino
   const v = HQ.views.center; HQ.look = v.l.clone(); camera.position.copy(v.p).add(new THREE.Vector3(0, 3.2, 3.5)); camera.lookAt(HQ.look);
@@ -618,7 +620,7 @@ const FOG0 = new THREE.Color('#040814'), FOG1 = new THREE.Color('#000105');
 function hqDim(dt) {
   const want = HQ.view === 'globe' && !(HQ.tw && HQ.tw.to !== 'globe') ? 1 : 0; HQ.dim += (want - HQ.dim) * Math.min(1, dt * 3); const k = HQ.dim;
   HQ.fox.root.visible = HQ.foxShadow.visible = k < .5;   // (in mission select he steps back into the dark, out of the map's way)
-  for (const L of HQ.lights) L.l.intensity = L.i * (1 - .85 * k); for (const g of HQ.glowDim) g.m.color.copy(g.c).multiplyScalar(1 - .9 * k); if (HQ.rim) HQ.rim.intensity = 30 * (1 - .7 * k);
+  for (const L of HQ.lights) L.l.intensity = L.i * (1 - .85 * k); for (const g of HQ.glowDim) g.m.color.copy(g.c).multiplyScalar(1 - .9 * k); if (HQ.rim) HQ.rim.intensity = 14 * (1 - .7 * k);
   const dc = camera.position.distanceTo(HQ.gc), f = HQ.scene.fog; f.near = lerp(16, dc + 2.2, k); f.far = lerp(42, dc + 7, k); f.color.copy(FOG0).lerp(FOG1, k); HQ.scene.background.copy(f.color);
 }
 // the navigator arrows beside the hologram: tap ‹ or › to fly to the previous or next mission
@@ -829,11 +831,11 @@ function playRoom(st) {
   return new Promise((resolve) => {
     disposeRoom(); const th = mission.m.theme, grid = parseMap(st.map), H = grid.length, W = grid[0].length;
     const S = new THREE.Scene(); S.background = new THREE.Color(th.fog); S.fog = new THREE.Fog(th.fog, 18, 46);
-    const hasKit = !!A.kits[mission.m.id], hemi = new THREE.HemisphereLight(th.light, hasKit ? th.fog : '#ffffff', hasKit ? (th.kitLight ?? .95) : 1.7); S.add(hemi); const sun = new THREE.DirectionalLight(hasKit ? th.light : '#ffffff', hasKit ? .9 : 1.6); sun.position.set(-6, 14, 8); S.add(sun);
+    const hasKit = !!A.kits[mission.m.id], hemi = new THREE.HemisphereLight(th.light, hasKit ? th.fog : '#ffffff', (hasKit ? (th.kitLight ?? .95) : 1.7) * (mission.m.id === 'arctic' ? 1 : 1.3)); S.add(hemi); const sun = new THREE.DirectionalLight(hasKit ? th.light : '#ffffff', hasKit ? (mission.m.id === 'arctic' ? .9 : 1.15) : 1.6);   // (brighter rooms; the snowy Arctic is bright enough) sun.position.set(-6, 14, 8); S.add(sun);
     const ox = -(W - 1) * CELL / 2, oz = -(H - 1) * CELL / 2, cpos = (c, r) => new THREE.Vector3(ox + c * CELL, 0, oz + r * CELL);
     const R = room = { st, S, grid, W, H, ox, oz, cpos, guards: [], cams: [], lines: [], doors: [], gates: [], terms: [], resolve, start: null, exit: null, art: null, hasArt: false, cooldown: 0, busy: false, time: st.time || 0, t: 0, fx: [], zz: [] };
     // floor and walls (instanced cubes: stand-ins until the location kits arrive from Blender)
-    const floorM = new THREE.MeshStandardMaterial({ color: th.floor, roughness: .45, metalness: .3 }), wallM = new THREE.MeshStandardMaterial({ color: new THREE.Color(th.wall).multiplyScalar(.75), roughness: .7, metalness: .2 });
+    const floorM = new THREE.MeshStandardMaterial({ color: th.floor, roughness: .8, metalness: .05 }), wallM = new THREE.MeshStandardMaterial({ color: new THREE.Color(th.wall).multiplyScalar(.75), roughness: .7, metalness: .2 });
     const cells = [], walls = [];
     grid.forEach((row, r) => row.forEach((ch, c) => { if (ch === '#') walls.push([c, r]); else if (ch !== ' ') cells.push([c, r]); }));
     const KIT = A.kits[mission.m.id] || null; R.kit = KIT; const m4 = new THREE.Matrix4(), at = (p, ry = 0) => new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ry), new THREE.Vector3(1, 1, 1));
