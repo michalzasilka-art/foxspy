@@ -78,10 +78,10 @@ const tryLoad = (url) => loader.loadAsync(url).catch(() => null);
 const A = {};
 async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
-    ['fox', 'models/foxino-spy.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=2'],
-    ['case', 'models/glass-case.glb?v=1'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
-    ['bot', 'models/bolt-bot.glb?v=1'], ['secam', 'models/security-camera.glb?v=1'], ['emitter', 'models/laser-emitter.glb?v=1'], ['vaultdoor', 'models/vault-door.glb?v=1'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=1'],
-    ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=1`]),
+    ['fox', 'models/foxino-spy.glb?v=2'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=2'],
+    ['case', 'models/glass-case.glb?v=2'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
+    ['bot', 'models/bolt-bot.glb?v=2'], ['secam', 'models/security-camera.glb?v=2'], ['emitter', 'models/laser-emitter.glb?v=2'], ['vaultdoor', 'models/vault-door.glb?v=2'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=2'],
+    ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=2`]),
   ];
   const subs = ['Secure connection to HQ…', 'Decrypting mission files…', 'Charging the stun laser…', 'Scanning for Bolt-Bots…', 'Locating the Magpie…'];
   await Promise.all(list.map(async ([k, u]) => { A[k] = await tryLoad(u); done++; bar.style.width = (done / list.length * 100) + '%'; $('loadSub').textContent = subs[Math.min(subs.length - 1, Math.floor(done / list.length * subs.length))]; }));
@@ -818,7 +818,7 @@ const KIT_PIECES = ['floor', 'floor-2', 'wall', 'door', 'crate', 'terminal', 'pe
 A.kits = {};
 async function loadKit(id) {
   if (id in A.kits) return A.kits[id]; const out = {};
-  await Promise.all(KIT_PIECES.map(async (k) => { const g = await tryLoad(`models/kit-${id}-${k}.glb?v=1`); if (g) out[k] = dress(g.scene); }));
+  await Promise.all(KIT_PIECES.map(async (k) => { const g = await tryLoad(`models/kit-${id}-${k}.glb?v=2`); if (g) out[k] = dress(g.scene); }));
   return (A.kits[id] = out.wall && out.floor ? out : null);
 }
 // one InstancedMesh per mesh of a model, one instance per matrix
