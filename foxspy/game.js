@@ -79,7 +79,7 @@ const A = {};
 async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
     ['fox', 'models/foxino-spy.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=1'],
-    ['case', 'models/glass-case.glb?v=1'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'],
+    ['case', 'models/glass-case.glb?v=1'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
     ['bot', 'models/bolt-bot.glb?v=1'], ['secam', 'models/security-camera.glb?v=1'], ['emitter', 'models/laser-emitter.glb?v=1'], ['vaultdoor', 'models/vault-door.glb?v=1'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=1'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=1`]),
   ];
@@ -456,12 +456,14 @@ function buildGlobe() {
       else if (/^ocean/.test(n)) { m.material = M(oceanMat(!!o.geometry.attributes.color)); oceanDone = true; }
       else if (/^grid/.test(n)) { m.material = new THREE.MeshBasicMaterial({ color: '#5ff3ff', transparent: true, opacity: .35, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }); }
       else if (/^landmark_/.test(n)) return;   // (the landmarks go with their pins)
+      else if (A.mapframe && /^frame/.test(n)) return;   // (the separate frame file wins)
       else { const d = dress(o.clone()); G.add(d); return; }
       G.add(m); });
   if (!landDone && A.globe) { const m = new THREE.Mesh(flatLandFromGlobe(), M(landMat())); HQ.landMats.push(m.material); G.add(m); }
   if (!oceanDone) { const o = new THREE.Mesh(new THREE.PlaneGeometry(W, D, 1, 1).rotateX(-Math.PI / 2).translate(0, 0, (z0 + z1) / 2), M(oceanMat(false))); G.add(o); }
   // stand-in frame (until the Blender map brings its own): a glowing edge with corner brackets and tick marks
-  if (!A.map) { const pts = [], edge = (a, b) => pts.push(a, b), y = .01, x0 = -4.06, x1 = 4.06, za = z0 - .06, zb = z1 + .06;
+  if (A.mapframe) G.add(dress(A.mapframe.scene.clone(true)));   // (the Blender frame: same map units)
+  else if (!A.map) { const pts = [], edge = (a, b) => pts.push(a, b), y = .01, x0 = -4.06, x1 = 4.06, za = z0 - .06, zb = z1 + .06;
     edge(new THREE.Vector3(x0, y, za), new THREE.Vector3(x1, y, za)); edge(new THREE.Vector3(x1, y, za), new THREE.Vector3(x1, y, zb)); edge(new THREE.Vector3(x1, y, zb), new THREE.Vector3(x0, y, zb)); edge(new THREE.Vector3(x0, y, zb), new THREE.Vector3(x0, y, za));
     for (let lon = -180; lon <= 180; lon += 15) { const x = lon / 45, L = lon % 45 === 0 ? .1 : .05; edge(new THREE.Vector3(x, y, za), new THREE.Vector3(x, y, za - L)); edge(new THREE.Vector3(x, y, zb), new THREE.Vector3(x, y, zb + L)); }
     for (let lat = -45; lat <= 75; lat += 15) { const z = -lat / 45, L = lat % 45 === 0 ? .1 : .05; edge(new THREE.Vector3(x0, y, z), new THREE.Vector3(x0 - L, y, z)); edge(new THREE.Vector3(x1, y, z), new THREE.Vector3(x1 + L, y, z)); }
