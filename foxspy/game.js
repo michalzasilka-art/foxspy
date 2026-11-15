@@ -333,7 +333,7 @@ function placeHQFox() {
 function mapBaseDist() { return PORTRAIT() ? fitDist(1.6, 1.2) : fitDist(HQ.mapW * .82, HQ.mapD * 1.5); }
 function mapView(f, zoom) {
   const P = PORTRAIT(), d = mapBaseDist() * zoom, pitch = P ? 1.3 : 1.15, dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
-  const l = f.clone(); if (P) l.z += d * .2; else l.x += d * .14;   // (tall screens: the map in the top half, over the card; wide: the map left of the card)
+  const l = f.clone(); if (P) l.z += d * .13; else l.x += d * .14;   // (tall screens: the map in the top half, over the card; wide: the map left of the card)
   return { p: l.clone().addScaledVector(dir, d), l };
 }
 function computeViews() {
@@ -422,7 +422,7 @@ const landMat = () => new THREE.ShaderMaterial({ vertexColors: true, toneMapped:
       gl_FragColor = vec4(min(c, vec3(.9)), 1.0); }` });
 const oceanMat = (vc) => new THREE.ShaderMaterial({ vertexColors: vc, transparent: true, depthWrite: false, toneMapped: false,
   uniforms: { uTime: { value: 0 }, uScan: { value: 0 } },
-  vertexShader: `varying vec3 vL, vW, vC; void main(){ vL = position; ${vc ? 'vC = color;' : 'vC = vec3(1.0);'} vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  vertexShader: `varying vec3 vL, vW, vC; void main(){ vL = position; ${vc ? 'vC = vec3(color);' : 'vC = vec3(1.0);'} vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
   fragmentShader: `uniform float uTime, uScan; varying vec3 vL, vW, vC;
     float line(float v, float w){ float f = abs(fract(v) - .5); return smoothstep(.5 - w, .5, f); }
     void main(){ vec2 g = vL.xz * 3.0;                                                    // every 15 degrees
@@ -495,7 +495,7 @@ function buildGlobe() {
   MISSIONS.forEach((m) => {
     const base = mapPos(m.lat, m.lon), col = new THREE.Color(m.color), pin = new THREE.Group(); pin.position.copy(base); S.add(pin);
     let lm = A.map && A.map.scene.getObjectByName('Landmark_' + m.id);
-    if (lm) { lm = dress(lm.clone(true)); lm.position.set(0, 0, 0); lm.scale.multiplyScalar(MAP.s); pin.add(lm); }
+    if (lm) { lm = dress(lm.clone(true)); lm.position.set(0, 0, 0); lm.scale.multiplyScalar(MAP.s * 1.7); pin.add(lm); }   // (the tokens a bit larger than map scale, so they read from the map camera)
     else { lm = new THREE.Group(); const tw = new THREE.Mesh(new THREE.ConeGeometry(.035, .16, 4).translate(0, .08, 0), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: .5, flatShading: true, metalness: .3, roughness: .4 })); lm.add(tw); pin.add(lm); }
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(.004, .016, .42, 12, 1, true).translate(0, .21, 0), M(holoMat(m.color, .8))); pin.add(beam);
     const ring = new THREE.Mesh(new THREE.RingGeometry(.035, .044, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: col, transparent: true, side: THREE.DoubleSide, toneMapped: false, depthWrite: false })); ring.position.y = .012; pin.add(ring);
@@ -585,7 +585,7 @@ function selectMission(m) {
   $('cardN').textContent = `MISSION ${m.n} · ${m.where.toUpperCase()}`; $('cardName').textContent = m.name; $('cardPlace').textContent = m.place; $('cardStory').textContent = m.story;
   $('cardTime').textContent = `⏱ ${m.mins} min`; $('cardArt').textContent = `◆ ${m.artifact}`; const d = save.done[m.id]; $('cardBest').textContent = d ? `Best: ${'★'.repeat(d.stars)}${'☆'.repeat(3 - d.stars)}` : 'New mission';
   $('card').style.setProperty('--c', m.color); const c = $('card'); c.classList.add('hidden-card'); void c.offsetWidth; c.classList.remove('hidden-card');
-  HQ.focusTo = focusFor(m); HQ.zoomTo = .78; HQ.vel = { x: 0, z: 0 };
+  HQ.focusTo = focusFor(m); HQ.zoomTo = .62; HQ.vel = { x: 0, z: 0 };
 }
 // the globe turn that brings a mission's pin to face the camera (a little tilt for places far north or south)
 const focusFor = (m) => HQ.pins.find((p) => p.m === m).base.clone();
@@ -717,7 +717,7 @@ async function runStages() {
   if (mission) finishMission();
 }
 function stageBackdrop() { // the HQ hologram view stays behind the story screens
-  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; computeViews(); const gv = HQ.views.globe; camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.focus.copy(focusFor(m)); HQ.zoom = .78; HQ.focusTo = null; const v = mapView(HQ.focus, HQ.zoom); camera.position.copy(v.p); HQ.look.copy(v.l); }
+  mode = 'hq'; showScreen(null); HQ.view = 'globe'; HQ.tw = null; computeViews(); const gv = HQ.views.globe; camera.position.copy(gv.p); HQ.look.copy(gv.l); if (mission) { const m = mission.m; HQ.selected = m; HQ.focus.copy(focusFor(m)); HQ.zoom = .62; HQ.focusTo = null; const v = mapView(HQ.focus, HQ.zoom); camera.position.copy(v.p); HQ.look.copy(v.l); }
 }
 function magpieSet(kind) {
   if (!A.magpie) return null; const set = makeSet('#0e1120'), mp = new THREE.Group(), rg = rigged(A.magpie, 1.5); mp.add(rg.inner); set.S.add(mp); rg.play(kind === 'caught' ? 'caught' : 'laugh', 0);
