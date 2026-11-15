@@ -5,6 +5,7 @@
 // 3D: the Blender models in models/ (made on the Windows PC); until each one arrives a stand-in is used.
 import * as THREE from './lib/three.module.min.js';
 import { GLTFLoader } from './lib/GLTFLoader.js';
+import { MeshoptDecoder } from './lib/meshopt_decoder.module.js';
 import { MISSIONS, RANKS } from './missions.js?v=5';
 import { EffectComposer } from './lib/pp/EffectComposer.js';
 import { RenderPass } from './lib/pp/RenderPass.js';
@@ -73,12 +74,12 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 /* ================= assets ================= */
-const loader = new GLTFLoader();
+const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
 const tryLoad = (url) => loader.loadAsync(url).catch(() => null);
 const A = {};
 async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
-    ['fox', 'models/foxino-spy.glb?v=2'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=2'],
+    ['fox', 'models/foxino-spy.glb?v=2'], ['agent', 'models/foxino-agent.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=2'],
     ['case', 'models/glass-case.glb?v=2'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
     ['bot', 'models/bolt-bot.glb?v=2'], ['secam', 'models/security-camera.glb?v=2'], ['emitter', 'models/laser-emitter.glb?v=2'], ['vaultdoor', 'models/vault-door.glb?v=2'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=2'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=2`]),
@@ -116,6 +117,90 @@ function makeFoxino(withGun = true) {
     } };
   if (withGun && A.gun && fox.hasClips) { const hand = findBone(inner, /RightHand$/); if (hand) { const g = dress(A.gun.scene.clone()); g.rotation.set(GUN_ROT[0], GUN_ROT[1], GUN_ROT[2]); g.position.set(GUN_POS[0], GUN_POS[1], GUN_POS[2]); hand.add(g); fox.gun = g; } }
   fox.play('idle', 0);
+  return fox;
+}
+// THE AGENT (the user's Tripo model, menu only): rigged on the Mac with the Sky Dive bone names, alive in code:
+// breathing, the head looking round right and left, blinks, the mouth now open (his grin) and now closed (a painted-over
+// smile in img/agent-mouth-closed.png), and his eyes (drawn in the shader over the painted ones) on the menu buttons.
+const AGENT_EYES = [ // rest-pose metres: sclera ellipse (centre, half axes, angle), the iris where it was painted, its and the pupil's radius
+  { c: [-0.035, 0.6911], a: 0.0375, b: 0.040, ang: 115.76, iris: [-0.0312, 0.690], ri: 0.0235, rp: 0.0135, z: 0.10 },
+  { c: [0.1003, 0.7089], a: 0.0323, b: 0.0393, ang: 14.5, iris: [0.0890, 0.7038], ri: 0.0225, rp: 0.0125, z: 0.075 }];
+const AGENT_MOUTH = { x0: -0.06, x1: 0.14, y0: 0.56, y1: 0.68, z: 0.06 };   // where the closed-mouth picture sits (rest-pose metres)
+function agentFace(mesh) {
+  const tex = new THREE.TextureLoader().load('img/agent-mouth-closed.png?v=1'); tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false;
+  const U = { uClosed: { value: 0 }, uBlink: { value: 0 }, uLook: { value: new THREE.Vector2() }, uMouth: { value: tex },
+    uQS: { value: mesh.scale.clone() }, uQO: { value: mesh.position.clone() } };   // (KHR_mesh_quantization: the mesh node turns the stored numbers back into metres)
+  const lin = (r, g, b) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
+  const v3 = (c) => `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`;
+  const W = v3(lin(.91, .905, .9)), IR = v3(lin(.13, .44, .39)), IRD = v3(lin(.03, .17, .16)), PU = v3(lin(.02, .06, .07)), LID = v3(lin(.62, .28, .64)), LASH = v3(lin(.14, .07, .16));
+  const eyeGL = AGENT_EYES.map((e, i) => { const t = e.ang * Math.PI / 180, ca = Math.cos(t), sa = Math.sin(t);
+    return `{ vec2 d = vRest.xy - vec2(${e.c[0]}, ${e.c[1]}); vec2 q = vec2(dot(d, vec2(${ca.toFixed(5)}, ${(-sa).toFixed(5)})) / ${e.a}, dot(d, vec2(${sa.toFixed(5)}, ${ca.toFixed(5)})) / ${e.b});
+      float r = length(q);
+      if (r < 1.0 && vRest.z > ${e.z}) {
+        float h = (vRest.y - ${e.c[1]}) / ${Math.max(e.a, e.b).toFixed(4)};                   // -1 bottom .. 1 top of the eye
+        vec3 col = ${W} * (0.78 + 0.22 * smoothstep(0.9, -0.4, h));                            // the white, shaded under the lid
+        vec2 ic = vec2(${e.iris[0]}, ${e.iris[1]}) + uLook * vec2(${(e.a * .42).toFixed(4)}, ${(Math.min(e.a, e.b) * .3).toFixed(4)});
+        float ri = length(vRest.xy - ic) / ${e.ri};
+        vec3 iris = mix(${IR}, ${IRD}, smoothstep(0.35, 1.0, ri)) * (1.0 + 0.35 * smoothstep(0.2, -0.6, (vRest.y - ic.y) / ${e.ri}));
+        col = mix(iris, col, smoothstep(0.93, 1.0, ri));
+        col = mix(${PU}, col, smoothstep(${(e.rp / e.ri * .94).toFixed(3)}, ${(e.rp / e.ri * 1.04).toFixed(3)}, ri));
+        vec2 hl = (vRest.xy - ic - vec2(${(e.ri * .3).toFixed(4)}, ${(e.ri * .45).toFixed(4)})) / ${e.ri};
+        col = mix(vec3(1.0), col, smoothstep(0.17, 0.22, length(hl)));
+        col = mix(vec3(0.85), col, smoothstep(0.07, 0.1, length(hl + vec2(0.5, 0.75))));
+        float lid = 1.0 - 2.0 * uBlink;                                                        // the upper lid comes down
+        col = mix(col, ${LASH}, smoothstep(lid + 0.16, lid + 0.06, h) * step(0.01, uBlink) * smoothstep(lid - 0.02, lid + 0.06, h));
+        col = mix(col, ${LID}, smoothstep(lid + 0.04, lid + 0.1, h) * step(0.01, uBlink));
+        diffuseColor.rgb = mix(diffuseColor.rgb, col, 1.0 - smoothstep(0.88, 0.96, r));
+      } }`; }).join('\n');
+  const mat = mesh.material = mesh.material.clone();
+  mat.metalness = 0; mat.metalnessMap = null; mat.roughness = Math.max(.7, mat.roughness); mat.envMapIntensity = .35; mat.color.setScalar(.86);   // (the Tripo material reads as metal and washes out under the HQ lights)
+  mat.onBeforeCompile = (sh) => { Object.assign(sh.uniforms, U);
+    sh.vertexShader = 'uniform vec3 uQS; uniform vec3 uQO; varying vec3 vRest;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vRest = position * uQS + uQO;');
+    sh.fragmentShader = 'uniform float uClosed; uniform float uBlink; uniform vec2 uLook; uniform sampler2D uMouth; varying vec3 vRest;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      if (vRest.z > ${AGENT_MOUTH.z} && uClosed > 0.001) { vec2 mu = vec2((vRest.x - (${AGENT_MOUTH.x0})) / ${(AGENT_MOUTH.x1 - AGENT_MOUTH.x0).toFixed(3)}, (${AGENT_MOUTH.y1} - vRest.y) / ${(AGENT_MOUTH.y1 - AGENT_MOUTH.y0).toFixed(3)});
+        if (mu.x > 0.0 && mu.x < 1.0 && mu.y > 0.0 && mu.y < 1.0) { vec4 m = texture2D(uMouth, mu); diffuseColor.rgb = mix(diffuseColor.rgb, m.rgb, m.a * uClosed); } }
+      ${eyeGL}`); };
+  mat.customProgramCacheKey = () => 'foxspy-agent-face';
+  return U;
+}
+function makeAgent() {
+  const root = new THREE.Group(), inner = A.agent.scene; dress(inner); fitHeight(inner, 1.4); root.add(inner);
+  const B = {}; let mesh = null; inner.traverse((o) => { if (o.isBone) B[o.name] = o; if (o.isSkinnedMesh) mesh = o; });
+  const rest = {}; for (const k in B) rest[k] = B[k].quaternion.clone();
+  const U = agentFace(mesh);
+  const q = new THREE.Quaternion(), e = new THREE.Euler(), rnd = (a, b) => a + Math.random() * (b - a);
+  const st = { t: 0, yaw: 0, yawTo: 0, pitch: 0, pitchTo: 0, nextLook: 1.5, mouth: 0, mouthTo: 0, nextMouth: 2.5, blink: -1, nextBlink: 2, look: new THREE.Vector2(), lookTo: new THREE.Vector2(), nextGlance: 3, glance: 0 };
+  const pose = (name, x, y, z) => { const b = B[name]; if (!b) return; e.set(x, y, z, 'YXZ'); b.quaternion.copy(rest[name]).multiply(q.setFromEuler(e)); };
+  const head = new THREE.Vector3(), tgt = new THREE.Vector3(), hq = new THREE.Quaternion();
+  const fox = { root, inner, agent: true, hasClips: false, face: U, play() {}, st,
+    update(dt) {
+      const s = st; s.t += dt; const t = s.t;
+      // where he looks: a slow look round, right and left (and now and then a little up or down)
+      if ((s.nextLook -= dt) <= 0) { s.yawTo = s.yawTo > 0 ? rnd(-.55, -.15) : rnd(.15, .55); if (Math.random() < .3) s.yawTo = rnd(-.12, .12); s.pitchTo = rnd(-.05, .14); s.nextLook = rnd(2.2, 4.8); }
+      const k = 1 - Math.exp(-dt * 2.4); s.yaw += (s.yawTo - s.yaw) * k; s.pitch += (s.pitchTo - s.pitch) * k;
+      // breathing: about 18 breaths a minute, the chest lifts and the shoulders rise a little
+      const br = Math.sin(t * 2 * Math.PI / 3.4), br2 = Math.sin(t * 2 * Math.PI / 3.4 - .6);
+      pose('Hips', 0, Math.sin(t * .45) * .03, Math.sin(t * .3) * .012);
+      pose('Spine02', .015 * br, 0, 0); pose('Spine01', -.02 * br, s.yaw * .08, 0); pose('Spine', -.025 * br, s.yaw * .12, 0);
+      pose('neck', s.pitch * .4 + .01 * br2, s.yaw * .3, -s.yaw * .03); pose('Head', s.pitch * .6 - .012 * br2, s.yaw * .5, -s.yaw * .06 + Math.sin(t * .7) * .02);
+      pose('LeftArm', 0, 0, -.02 * br2); pose('RightArm', 0, 0, .02 * br2); pose('LeftForeArm', .03 * br2, 0, 0); pose('RightForeArm', .03 * br2, 0, 0);
+      // the mouth: his grin for a while, then closed for a while
+      if ((s.nextMouth -= dt) <= 0) { s.mouthTo = s.mouthTo ? 0 : 1; s.nextMouth = s.mouthTo ? rnd(2, 5) : rnd(1.6, 4); }
+      s.mouth += (s.mouthTo - s.mouth) * (1 - Math.exp(-dt * 14)); U.uClosed.value = s.mouth;
+      // blinks (now and then a double one)
+      if (s.blink < 0 && (s.nextBlink -= dt) <= 0) { s.blink = 0; s.nextBlink = Math.random() < .2 ? .35 : rnd(2.2, 5.5); }
+      if (s.blink >= 0) { s.blink += dt / .17; U.uBlink.value = Math.sin(Math.min(1, s.blink) * Math.PI); if (s.blink >= 1) { s.blink = -1; U.uBlink.value = 0; } }
+      // the eyes: on the menu buttons (SELECT MISSION), now and then a glance at us
+      if ((s.nextGlance -= dt) <= 0) { s.glance = s.glance ? 0 : 1; s.nextGlance = s.glance ? rnd(.8, 1.6) : rnd(3, 6); }
+      const btn = document.getElementById('btnSelect'), H = B.Head;
+      if (H) { H.getWorldPosition(head);
+        if (btn && !s.glance) { const r = btn.getBoundingClientRect(); tgt.set((r.left + r.width / 2) / innerWidth * 2 - 1, -((r.top + r.height / 2) / innerHeight * 2 - 1), .5).unproject(camera);
+          tgt.sub(camera.position).normalize().multiplyScalar(head.distanceTo(camera.position) * .8).add(camera.position); }
+        else tgt.copy(camera.position);
+        tgt.sub(head); H.getWorldQuaternion(hq); tgt.applyQuaternion(hq.invert()).normalize();   // (in the head's own frame: +Z his front, +X his left)
+        s.lookTo.set(THREE.MathUtils.clamp(tgt.x / Math.max(.2, tgt.z) * 1.6, -1, 1), THREE.MathUtils.clamp(tgt.y / Math.max(.2, tgt.z) * 1.8, -1, 1)); }
+      s.look.lerp(s.lookTo, 1 - Math.exp(-dt * 16)); U.uLook.value.copy(s.look);
+    } };
   return fox;
 }
 const GUN_ROT = [-Math.PI / 2, 0, 0], GUN_POS = [0, .06, .02];   // the stun gun in the right hand: its barrel (+Z) along the hand bone (+Y)
@@ -315,8 +400,8 @@ function buildHQ() {
   HQ.pspan = Math.max(...HQ.pillars.map((p) => p.getWorldPosition(new THREE.Vector3()).distanceTo(HQ.pc))) * 2 + 1;
   // Foxino looking at the globe (the Blender spy plays LookAtGlobe: hand on chin, looking up to his left)
   const fp = HQ.FOX_AT = new THREE.Vector3(HQ.gc.x - 1.75, 0, HQ.gc.z + .55);
-  HQ.fox = makeFoxino(false); S.add(HQ.fox.root); HQ.foxShadow = blobShadow(.45); S.add(HQ.foxShadow); placeHQFox();
-  if (HQ.fox.hasClips) { HQ.fox.manual = true; HQ.fox.play(HQ_FOX.clip, 0); } HQ.foxHead = findBone(HQ.fox.inner, /Head$/); HQ.foxNeck = findBone(HQ.fox.inner, /Neck$/);
+  HQ.fox = A.agent ? makeAgent() : makeFoxino(false); S.add(HQ.fox.root); HQ.foxShadow = blobShadow(.45); S.add(HQ.foxShadow); placeHQFox();
+  if (HQ.fox.agent) { /* the agent moves himself (makeAgent) */ } else if (HQ.fox.hasClips) { HQ.fox.manual = true; HQ.fox.play(HQ_FOX.clip, 0); } HQ.foxHead = findBone(HQ.fox.inner, /Head$/); HQ.foxNeck = findBone(HQ.fox.inner, /Neck$/);
   const rim = new THREE.SpotLight('#9ff3ff', 14, 7, .5, .6, 1.4); rim.position.set(HQ.gc.x + .3, 3.6, HQ.gc.z + .6); rim.target = HQ.fox.root; S.add(rim); HQ.rim = rim;
   buildGlobe(); buildNavArrows(); buildMotes(); computeViews();
   // the opening shot: from high above the hologram down to Foxino
@@ -327,9 +412,10 @@ function buildHQ() {
 function fitDist(w, h) { const vt = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), ht = vt * camera.aspect; return Math.max(w / 2 / ht, h / 2 / vt); }
 // where Foxino stands: behind the projector table, looking up at the hologram; we look at him through it
 const HQ_FOX = { x: .15, z: -1.3, s: 1.35, turn: 0, tilt: -.45, clip: 'idle' };   // (behind the table map, looking down at it)
+const HQ_AGENT = { x: -.35, y: .45 };   // the agent stands up behind the table (on a step we don't see) so his face and suit clear the map
 function placeHQFox() {
-  const g = HQ.gc, f = HQ.FOX_AT = new THREE.Vector3(g.x + HQ_FOX.x, 0, g.z + HQ_FOX.z);
-  HQ.fox.root.position.copy(f); HQ.fox.root.scale.setScalar(HQ_FOX.s); HQ.fox.root.rotation.y = HQ_FOX.turn; HQ.foxShadow.position.set(f.x, .02, f.z);
+  const ag = HQ.fox && HQ.fox.agent, g = HQ.gc, f = HQ.FOX_AT = new THREE.Vector3(g.x + (ag ? HQ_AGENT.x : HQ_FOX.x), 0, g.z + HQ_FOX.z);
+  HQ.fox.root.position.copy(f); if (ag) HQ.fox.root.position.y = HQ_AGENT.y; HQ.fox.root.scale.setScalar(HQ_FOX.s); HQ.fox.root.rotation.y = HQ_FOX.turn; HQ.foxShadow.position.set(f.x, .02, f.z);
 }
 // mission select: the camera looks down at the map from the front, centred on HQ.focus (drag to move it, tap a pin to fly there)
 function mapBaseDist() { return PORTRAIT() ? fitDist(1.6, 1.2) : fitDist(HQ.mapW * .82, HQ.mapD * 1.5); }
@@ -608,7 +694,7 @@ function hqFrame(dt, t) {
   placePinTag();
   HQ.arts.forEach((a) => a && (a.rotation.y += dt * .8));
   HQ.cases.forEach((c, k) => { if (c.cone.visible) c.cone.material.uniforms.uA.value = .08 + Math.sin(t * 1.5 + k) * .025; });
-  HQ.fox.update(dt, false, 0); if (HQ.foxHead) HQ.foxHead.rotation.x -= HQ_FOX.tilt * .6; if (HQ.foxNeck) HQ.foxNeck.rotation.x -= HQ_FOX.tilt * .4;   // (looking down at the map)
+  HQ.fox.update(dt, false, 0); if (HQ.foxHead && !HQ.fox.agent) HQ.foxHead.rotation.x -= HQ_FOX.tilt * .6; if (HQ.foxNeck) HQ.foxNeck.rotation.x -= HQ_FOX.tilt * .4;   // (looking down at the map)
   hqDim(dt); navArrowsFrame(dt, t);
   if (HQ.tw) { const w = HQ.tw; w.t = Math.min(1, w.t + dt / w.d); const k = ease(w.t); camera.position.lerpVectors(w.p0, w.p1, k); HQ.look.lerpVectors(w.l0, w.l1, k); if (w.t >= 1) HQ.tw = null; }
   else if (HQ.view === 'center') { const v = HQ.views.center; camera.position.x = v.p.x + Math.sin(t * .2) * .12; camera.position.y = v.p.y + Math.sin(t * .27) * .04; }
@@ -619,7 +705,7 @@ function hqFrame(dt, t) {
 const FOG0 = new THREE.Color('#040814'), FOG1 = new THREE.Color('#000105');
 function hqDim(dt) {
   const want = HQ.view === 'globe' && !(HQ.tw && HQ.tw.to !== 'globe') ? 1 : 0; HQ.dim += (want - HQ.dim) * Math.min(1, dt * 3); const k = HQ.dim;
-  HQ.fox.root.visible = HQ.foxShadow.visible = k < .5;   // (in mission select he steps back into the dark, out of the map's way)
+  HQ.fox.root.visible = HQ.foxShadow.visible = k < .5; if (HQ.fox.agent) HQ.foxShadow.visible = false;   // (in mission select he steps back into the dark, out of the map's way)
   for (const L of HQ.lights) L.l.intensity = L.i * (1 - .85 * k); for (const g of HQ.glowDim) g.m.color.copy(g.c).multiplyScalar(1 - .9 * k); if (HQ.rim) HQ.rim.intensity = 14 * (1 - .7 * k);
   const dc = camera.position.distanceTo(HQ.gc), f = HQ.scene.fog; f.near = lerp(16, dc + 2.2, k); f.far = lerp(42, dc + 7, k); f.color.copy(FOG0).lerp(FOG1, k); HQ.scene.background.copy(f.color);
 }
@@ -1190,5 +1276,5 @@ function frame(now) {
 }
 (async () => {
   await loadAssets(); buildHQ(); window.__hqReady = true; mode = 'hq'; $('loading').classList.add('out'); setTimeout(() => $('loading').classList.remove('show', 'out'), 700); document.body.classList.toggle('portrait', PORTRAIT()); document.body.dataset.view = 'center'; setTimeout(() => showScreen('hq'), 1400); updateHQText(); requestAnimationFrame(frame);
-  window.FS = { hackSession, HQ_FOX, placeHQFox, computeViews, THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
+  window.FS = { hackSession, HQ_FOX, HQ_AGENT, placeHQFox, computeViews, THREE, HQ, camera, save, MISSIONS, startMission, setView, room: () => room, mission: () => mission, ask, A, use, stun };   // (test hooks)
 })();
