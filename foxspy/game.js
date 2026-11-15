@@ -78,7 +78,7 @@ const tryLoad = (url) => loader.loadAsync(url).catch(() => null);
 const A = {};
 async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
-    ['fox', 'models/foxino-spy.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=1'],
+    ['fox', 'models/foxino-spy.glb?v=1'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=2'],
     ['case', 'models/glass-case.glb?v=1'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=1'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
     ['bot', 'models/bolt-bot.glb?v=1'], ['secam', 'models/security-camera.glb?v=1'], ['emitter', 'models/laser-emitter.glb?v=1'], ['vaultdoor', 'models/vault-door.glb?v=1'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=1'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=1`]),
