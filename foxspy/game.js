@@ -79,7 +79,7 @@ const tryLoad = (url) => loader.loadAsync(url).catch(() => null);
 const A = {};
 async function loadAssets() {
   const bar = $('loadBar'); let done = 0; const list = [
-    ['fox', 'models/foxino-spy.glb?v=2'], ['agent', 'models/foxino-agent.glb?v=2'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=3'],
+    ['fox', 'models/foxino-spy.glb?v=2'], ['agent', 'models/foxino-agent.glb?v=5'], ['standin', 'models/foxino-standin.glb?v=1'], ['gun', 'models/stun-gun.glb?v=1'], ['room', 'models/hq-room.glb?v=3'],
     ['case', 'models/glass-case.glb?v=2'], ['globe', 'models/globe.glb?v=1'], ['map', 'models/holo-map.glb?v=2'], ['mapframe', 'models/holo-map-frame.glb?v=1'],
     ['bot', 'models/bolt-bot.glb?v=2'], ['secam', 'models/security-camera.glb?v=2'], ['emitter', 'models/laser-emitter.glb?v=2'], ['vaultdoor', 'models/vault-door.glb?v=2'], ['net', 'models/stun-net.glb?v=1'], ['magpie', 'models/magpie.glb?v=2'],
     ...MISSIONS.map((m) => ['art-' + m.artifactKey, `models/artifact-${m.artifactKey}.glb?v=2`]),
@@ -128,7 +128,7 @@ const AGENT_EYES = [ // rest-pose metres: sclera ellipse (centre, half axes, ang
   { c: [0.1003, 0.7089], a: 0.0323, b: 0.0393, ang: 14.5, iris: [0.0890, 0.7038], ri: 0.0225, rp: 0.0125, z: 0.075 }];
 const AGENT_MOUTH = { x0: -0.06, x1: 0.14, y0: 0.56, y1: 0.68, z: 0.06 };   // where the closed-mouth picture sits (rest-pose metres)
 function agentFace(mesh) {
-  const tex = new THREE.TextureLoader().load('img/agent-mouth-closed.png?v=1'); tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false;
+  const tex = new THREE.TextureLoader().load('img/agent-mouth-closed.png?v=1'); tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false; tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter;   // (no mipmaps: sampled inside an if, the edge of the box picked the smallest one and drew a pale line)
   const U = { uClosed: { value: 0 }, uBlink: { value: 0 }, uLook: { value: new THREE.Vector2() }, uMouth: { value: tex },
     uQS: { value: mesh.scale.clone() }, uQO: { value: mesh.position.clone() } };   // (KHR_mesh_quantization: the mesh node turns the stored numbers back into metres)
   const lin = (r, g, b) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
